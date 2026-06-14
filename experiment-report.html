@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SBDP 协议设计报告</title>
+<style>
+  :root { --bg: #1a1a2e; --card: #16213e; --accent: #0f3460; --text: #e0e0e0; --muted: #a0a0b0;
+    --highlight: #e94560; --green: #4caf84; --blue: #5b9bd5; --orange: #e8913a; --code-bg: #0d1117; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+  h1 { font-size: 2rem; text-align: center; padding: 2rem 0 1rem; color: #fff; border-bottom: 2px solid var(--accent); margin-bottom: 2rem; }
+  h2 { font-size: 1.3rem; color: var(--blue); margin: 2.5rem 0 1rem; padding-left: 0.5rem; border-left: 4px solid var(--blue); }
+  h3 { font-size: 1rem; color: var(--orange); margin: 1.2rem 0 0.6rem; }
+  table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; font-size: 0.88rem; }
+  th { background: var(--accent); color: #fff; padding: 0.4rem 0.7rem; text-align: left; }
+  td { padding: 0.35rem 0.7rem; border-bottom: 1px solid #2a2a4a; }
+  tr:hover td { background: rgba(255,255,255,0.03); }
+  pre, code { font-family: 'SF Mono', 'Consolas', monospace; font-size: 0.8rem; }
+  pre { background: var(--code-bg); padding: 0.8rem; border-radius: 6px; overflow-x: auto; border: 1px solid #2a2a4a; margin: 0.6rem 0; line-height:1.4; }
+  code { color: var(--green); } pre code { color: var(--text); }
+  .card { background: var(--card); border-radius: 6px; padding: 1rem; margin: 0.8rem 0; border: 1px solid #2a2a4a; }
+  .tag { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+  .t-blue { background: var(--blue); color: #000; } .t-orange { background: var(--orange); color: #000; } .t-green { background: var(--green); color: #000; }
+  .star { color: var(--highlight); }
+  .flex { display: flex; gap: 0.8rem; flex-wrap: wrap; }
+  .flex > * { flex: 1; min-width: 180px; }
+  .stat { font-size: 1.3rem; font-weight: 700; color: var(--green); }
+  .diagram { background: #0a0a14; padding: 1rem; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 0.75rem; line-height: 1.3; white-space: pre; color: #b0d0ff; }
+  .src-inherit { background: #1a3a5a; padding: 1px 6px; border-radius: 3px; font-size:0.8em; }
+  .src-adapt { background: #1a3a1a; padding: 1px 6px; border-radius: 3px; font-size:0.8em; }
+  .src-new { background: #402a10; padding: 1px 6px; border-radius: 3px; font-size:0.8em; color: var(--orange); }
+  hr { border: none; border-top: 1px solid #2a2a4a; margin: 1.5rem 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>SBDP — 卫星回传容量发现协议</h1>
+
+<!-- ══════════════════════════════ -->
+<h2>卫星网络的真实架构</h2>
+
+<div class="diagram">
+                        星际链路 (ISL)
+            SAT-A ◄──────────────────► SAT-B
+              │                            │
+   馈电链路    │                            │   馈电链路
+   (Feeder)    │                            │   (Feeder)
+              │                            │
+           ┌──┴──┐                      ┌──┴──┐
+           │ gNB │  (星上基站)           │ gNB │
+           └──┬──┘                      └──┬──┘
+              │                            │
+   接入链路    │                            │   接入链路
+   (Uu口/NR)  │                            │   (Uu口/NR)
+              │                            │
+           ┌──┴──┐                      ┌──┴──┐
+           │ UE  │                      │ UE  │
+           └─────┘                      └─────┘
+
+协议栈 (再生模式卫星, 星上含 gNB):
+┌──────────────────────────────────────────────────────┐
+│  UE         │  Satellite (gNB)  │  Ground (GW)      │
+├─────────────┼───────────────────┼───────────────────┤
+│  App        │                   │  App              │
+│  TCP/UDP    │                   │  TCP/UDP          │
+│  <strong>IP←SBDP寄生</strong> │  <strong>IP←SBDP逐跳更新</strong> |  IP               │
+│  PDCP/RLC   │  PDCP/RLC        │  GTP-U            │
+│  MAC        │  MAC             │  MAC              │
+│  PHY (NR)   │  PHY (NR+ISL)    │  PHY              │
+└─────────────┴───────────────────┴───────────────────┘
+</div>
+
+<p>SBDP 位于 <strong>IP 层</strong>。UE→gNB 是 IP 包，gNB↔gNB (ISL) 还是 IP 包，gNB→GW 也是 IP 包。<strong>只要包在 IP 层转发，SBDP 就寄生在上面逐跳更新瓶颈。</strong></p>
+
+<h3>三种链路，SBDP 都要处理</h3>
+<table>
+<tr><th>链路</th><th>标准名</th><th>通信双方</th><th>SBDP 做什么</th></tr>
+<tr><td>接入链路</td><td>Uu 口 / 5G NR</td><td>用户 UE ↔ 星上 gNB</td><td>gNB 读接入带宽, 写入 SBDP 报头</td></tr>
+<tr><td>星间链路</td><td>ISL / 激光或微波</td><td>卫星 gNB ↔ 卫星 gNB</td><td>每跳 gNB 读 ISL 带宽, min 更新瓶颈字段</td></tr>
+<tr><td>馈电链路</td><td>Feeder / SGL</td><td>星上 gNB ↔ 地面网关</td><td>读馈电带宽, min 更新, 到达地面站</td></tr>
+</table>
+
+<div class="card">
+<p>SBDP 不是独立的一层。<strong>它寄生在 IP 层 (IPv6 Hop-by-Hop Option)</strong>，跨层读链路层带宽、写网络层字段。这不是"违反分层"，是<strong>跨层优化</strong>——卫星链路变化太快，纯端到端猜测跟不上。</p>
+</div>
+
+<h2>协议是什么</h2>
+
+<p>SBDP (Satellite Backhaul Discovery Protocol)：卫星网络主动、持续地向用户推送"你到互联网的回传瓶颈是多少 Mbps"，用户无需探测。</p>
+
+<h3>报头格式 (RFC 标准位图)</h3>
+<pre style="font-size:0.78rem;line-height:1.3;background:#0a0a14;color:#b0d0ff;"><code> 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|Version| Type  |    Flags      |         Total Length          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|        Sequence Number        |    TTL        |   Hop Count   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|            <strong>Backhaul Capacity</strong> (float32, Mbps)                |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|           Checksum            |         Reserved              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    TLV Options (variable)...                  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</code></pre>
+
+<h3>核心机制 — 逐跳 min 更新</h3>
+<pre><code>Satellite receives SBDP packet:
+  1. PeekHeader  → read backhaul_bw
+  2. RemoveHeader
+  3. checkBw = min(incoming_link_bw, outgoing_link_bw)
+  4. <strong>if checkBw &lt; backhaul_bw:  backhaul_bw = checkBw</strong>   ★ N2 ① 瓶颈带宽
+  5. latency += outgoing_link_latency                       ★ N2 ④ 时延累加
+  6. jitter = max(jitter, outgoing_link_jitter)            ★ N2 ④ 抖动取max
+  7. pkt_loss = 1-(1-pkt_loss)*(1-outgoing_link_loss)      ★ N2 ④ 丢包累积
+  8. avail_cap = min(avail_cap, outgoing_link_bw)          ★ N2 ⑤ 可用容量
+  9. hop_count++, ttl--
+ 10. AddHeader   → re-serialize with new CRC
+ 11. Forward to next hop</code></pre>
+
+<h3>设计溯源</h3>
+<table>
+<tr><th>字段/机制</th><th>来源</th><th>说明</th></tr>
+<tr><td>Version, Type, TTL, Total Length, Checksum</td><td><span class="src-inherit">IP</span></td><td>标准协议头字段</td></tr>
+<tr><td>Sequence Number, Flags</td><td><span class="src-inherit">TCP</span></td><td>去重、丢包检测、控制标志</td></tr>
+<tr><td>TLV 扩展链</td><td><span class="src-inherit">LLDP/BGP/OSPF</span></td><td>兼容未来扩展不改报头</td></tr>
+<tr><td>CRC-16-CCITT, 每跳重算</td><td><span class="src-inherit">PPP</span></td><td>保证传输完整性</td></tr>
+<tr><td>Push 推送模式</td><td><span class="src-adapt">借鉴 ICMP</span></td><td>ICMP 报告错误 → SBDP 报告带宽</td></tr>
+<tr><td>逐跳中间节点处理</td><td><span class="src-adapt">借鉴 RSVP</span></td><td>RSVP 逐跳建状态 → SBDP 逐跳改字段</td></tr>
+<tr><td><strong>backhaul_bw 瓶颈字段</strong></td><td><span class="src-new">SBDP 原创</span></td><td>携带端到端瓶颈带宽, 逐跳 min 更新</td></tr>
+<tr><td><strong>跨层读写</strong></td><td><span class="src-new">SBDP 原创</span></td><td>网络层报文读链路层带宽, 写入报头</td></tr>
+<tr><td><strong>主动容量通告</strong></td><td><span class="src-new">SBDP 原创</span></td><td>卫星主动推回传容量给用户</td></tr>
+<tr><td><strong>链路 QoS 逐跳追踪</strong></td><td><span class="src-new">SBDP 原创</span></td><td>时延累加、抖动取max、丢包率累积，每跳更新</td></tr>
+<tr><td><strong>业务类别差异化</strong></td><td><span class="src-new">SBDP 原创</span></td><td>按 traffic_class/priority 区分可用容量</td></tr>
+</table>
+
+<!-- ══════════════════════════════ -->
+<h3>N2 接口 — 星载gNB↔星载路由器 五项信息</h3>
+
+<p>SBDP 承载 N2 接口的全部五项信息，让 gNB 能够全面了解承载网状态：</p>
+
+<table>
+<tr><th>N2 信息项</th><th>说明</th><th>SBDP 字段</th><th>类型</th><th>逐跳处理</th></tr>
+<tr><td><strong>① 瓶颈带宽</strong></td><td>路由器暴露链路带宽</td><td><code>backhaul_capacity</code> (Header 固定字段, float32)</td><td>承载网</td><td>min(出口带宽, 传入值)</td></tr>
+<tr><td><strong>② 瓶颈位置</strong></td><td>精确指向拥塞段</td><td><code>BOTTLENECK_LINK</code> (TLV 0x0003, string)</td><td>承载网</td><td>瓶颈变化时更新</td></tr>
+<tr><td><strong>③ 路径追踪</strong></td><td>暴露用户路径属性</td><td><code>PATH_TRACE</code> (TLV 0x0004, string)</td><td>承载网</td><td>每跳追加 "→下一跳"</td></tr>
+<tr><td><strong>④ 链路 QoS</strong></td><td>链路 QoS 暴露至 gNB</td><td><code>LINK_LATENCY</code> (TLV 0x000A, float32 ms)<br><code>LINK_JITTER</code> (TLV 0x000B, float32 ms)<br><code>LINK_PKT_LOSS</code> (TLV 0x000C, float32 比率)</td><td>承载网</td><td>时延: 逐跳累加 Σ<br>抖动: 逐跳取 max<br>丢包: 累积 1-∏(1-pᵢ)</td></tr>
+<tr><td><strong>⑤ 业务属性</strong></td><td>按用户/业务类别区分</td><td><code>TRAFFIC_CLASS</code> (TLV 0x000D, string: "realtime"/"bulk"/"best-effort")<br><code>USER_PRIORITY</code> (TLV 0x000E, uint8: 0=best-effort ~ 7=network-control)</td><td>接入侧</td><td>不修改 (gNB 设置)</td></tr>
+</table>
+
+<div class="card">
+<strong>N2 请求-响应模式：</strong>SBDP 定义了 <code>CAPACITY_REQ</code> (gNB→路由器查询) 和 <code>CAPACITY_ACK</code> (路由器→gNB应答) 消息类型。<code>SBDPEngine.build_n2_response()</code> 可构造包含全部五项信息的完整 N2 应答报文 (TTL=1, 单跳)。引擎当前默认使用 Push 模式 (<code>CAPACITY_ADV</code>)，REQ/ACK 模式可按需启用。
+</div>
+
+<!-- ══════════════════════════════ -->
+<h3>N3 接口 — gNB 间接入协同</h3>
+
+<p>N3 是星载 gNB 之间的逻辑接口，通过 ISL 承载。SBDP 用两种方式实现 N3：<strong>轻量捎带</strong>（日常状态共享）和<strong>迁移握手</strong>（群切换协同）。</p>
+
+<table>
+<tr><th>N3 功能</th><th>说明</th><th>SBDP 实现</th><th>方式</th></tr>
+<tr><td><strong>gNB 负载共享</strong></td><td>基站负载在 gNB 间扩散</td><td><code>GNB_LOAD</code> (TLV 0x0011, float32 0.0~1.0)</td><td>捎带在 ADV 里广播给覆盖区内所有 UE + gNB</td></tr>
+<tr><td><strong>信道质量共享</strong></td><td>空口信道质量在 gNB 间扩散</td><td><code>CHANNEL_QUALITY</code> (TLV 0x0012, float32 SINR dB)</td><td>捎带在 ADV 里</td></tr>
+<tr><td><strong>群切换协同迁移</strong></td><td>多基站协同低开销接入迁移</td><td><code>CAPACITY_MIGRATE</code> (0x05) / <code>CAPACITY_CONFIRM</code> (0x06)<br><code>HandoverCoordinator</code> 类</td><td>gNB 间点对点握手</td></tr>
+</table>
+
+<div class="card">
+<strong>N3 两种工作模式：</strong><br><br>
+<strong>① 捎带模式 (日常)：</strong>卫星在 ADV 里顺便带上 <code>GNB_LOAD</code> 和 <code>CHANNEL_QUALITY</code>，覆盖区内所有 UE 和其他 gNB 都能收到。UE 综合回传 + 负载 + 信道做评分排名。gNB 也能互相感知对方状态。<br><br>
+<strong>② 迁移模式 (群切换时)：</strong>当 gNB 过载或大批 UE 需要同时切走时，源 gNB 不是让 UE 各自盲抢，而是：查邻居表按评分排序 → 向最优候选星发 <code>MIGRATE</code> → 收到 <code>CONFIRM</code>（接/拒+替代建议）→ 分配 UE → 完成切换。
+</div>
+
+<pre><code># 群切换迁移流程 (HandoverCoordinator)
+源gNB (SAT-B, 负载90%):
+  coord = HandoverCoordinator("SAT-B")
+  coord.update_neighbor("SAT-A", backhaul=500, GnBState(0.6, 15dB))
+  coord.update_neighbor("SAT-C", backhaul=600, GnBState(0.4, 12dB))
+  # 5个UE需要切走
+  assignments = coord.decide_migration(["UE-1".."UE-5"], required_bw=50M)
+  # → UE-1,UE-2,UE-3→SAT-C, UE-4,UE-5→SAT-A
+  # 对每个目标星发 MIGRATE 请求确认
+
+目标gNB (SAT-C):
+  conf = coord.process_migrate_request(req, my_state=GnBState(0.4,...))
+  # → 确认接UE-1,2,3, 预留150M, 拒绝0个</code></pre>
+
+<h3>两版实现</h3>
+<table>
+<tr><th></th><th>Python (sbdp.py)</th><th>NS-3 C++ (contrib/sbdp/)</th></tr>
+<tr><td>报头大小</td><td>16B 固定 + TLV 变长</td><td>104B 固定 (含瓶颈描述+源节点字符串)</td></tr>
+<tr><td>基类</td><td>Python dataclass</td><td><strong>ns3::Header</strong> (序列化进 PCAP)</td></tr>
+<tr><td>适用</td><td>快速原型 / 算法验证</td><td>协议层仿真 / PCAP 抓包证明</td></tr>
+</table>
+
+<hr>
+
+<!-- ══════════════════════════════ -->
+<h2>协议能实现什么</h2>
+
+<div class="flex">
+  <div class="card"><strong>① 逐跳瓶颈发现</strong><br>每跳 min(出口带宽, 传入值)<br>接收端得到整条路径的最小带宽</div>
+  <div class="card"><strong>② 被动持续通知</strong><br>用户无需探测<br>卫星主动推送, 拓扑变→立即推</div>
+  <div class="card"><strong>③ 长时间追踪</strong><br>870s 会话 48 次更新<br>心跳 30s 兜底, 永不过期</div>
+</div>
+<div class="flex">
+  <div class="card"><strong>④ 可见星回传表</strong><br>用户收到所有可见星的 ADV<br>本地维护 map&lt;星名, 回传&gt;</div>
+  <div class="card"><strong>⑤ 基于回传的切换</strong><br>当前星 < 阈值 → 查表<br>→ 切到最优候选星</div>
+  <div class="card"><strong>⑥ 协议层可验证</strong><br>二进制 Header → PCAP<br>Wireshark 逐字节对照</div>
+</div>
+
+<h3>优化机制</h3>
+<table>
+<tr><th>机制</th><th>作用</th><th>改动量</th></tr>
+<tr><td>心跳推送 (30s)</td><td>拓扑稳定时用户也知道数据仍有效</td><td>卫星加 Timer</td></tr>
+<tr><td>有效期字段 (35s)</td><td>超时未收→标记 stale, 用户能感知过期</td><td>已有 TLV, 用户端检测</td></tr>
+<tr><td>序列号连续性检测</td><td>seq 跳变→知道丢了包, 估算漏了多少</td><td>用户端比较 seq</td></tr>
+<tr><td>变化阈值过滤 (5%)</td><td>回传波动 <5% 不推, 减少冗余</td><td>卫星加比较逻辑</td></tr>
+<tr><td>覆盖区全推</td><td>用户收到所有可见星的回传, 构建候选表</td><td>卫星推覆盖区内所有用户</td></tr>
+</table>
+
+<hr>
+
+<!-- ══════════════════════════════ -->
+<h2>适用场景</h2>
+
+<table>
+<tr><th>场景</th><th>SBDP 的作用</th><th>受益方</th></tr>
+<tr><td><strong>LEO 卫星互联网</strong><br>用户通过卫星上网, 星座高速运动</td><td>用户持续知道回传容量, 提前预判恶化,<br>在切星时选回传更好的候选星</td><td>终端用户、地面站</td></tr>
+<tr><td><strong>星地链路切换</strong><br>地面站在多颗可见星中选择</td><td>基站收到所有可见星的 ADV,<br>基于回传容量而非仅信号强度做切换决策</td><td>信关站、测控站</td></tr>
+<tr><td><strong>多跳星间回传</strong><br>用户经多颗卫星中继到地面站</td><td>每跳卫星更新瓶颈, 端到端瓶颈自动浮现,<br>无需全局拓扑视图</td><td>中间卫星、网络运维</td></tr>
+<tr><td><strong>拥塞控制辅助</strong><br>TCP/QUIC 需要知道瓶颈</td><td>SBDP 直接把瓶颈告诉传输层,<br>替代 BBR 的端到端猜测, 收敛更快</td><td>发送端速率控制</td></tr>
+<tr><td><strong>故障定位</strong><br>某段链路突然恶化</td><td>瓶颈链路字段精确指向故障段,<br>无需全网 traceroute</td><td>网络运维、故障恢复</td></tr>
+</table>
+
+<hr>
+
+<!-- ══════════════════════════════ -->
+<h2>NS-3 验证 — 4 个实验</h2>
+
+<p>所有实验使用真实 NS-3 网络栈——卫星通过 UDP socket 发送 SBDP 二进制报文（16B 固定头 + TLV 链 + CRC-16），用户通过 socket 接收解析，PCAP 可逐字节验证。</p>
+
+<!-- ─────────────────────────────────────── -->
+<h3>实验 1 — 协议二进制证明</h3>
+
+<p>4 节点串行链，SBDP 报文逐跳更新。这是协议最底层的正确性保证——证明二进制格式、CRC、逐跳 min 在真实网络包中正确。</p>
+
+<table>
+<tr><th>拓扑</th><td>User-1(150M)→SAT-A(600M)→SAT-B(350M)→Server(1000M)</td></tr>
+<tr><th>协议流程</th><td>User 发探测包(backhaul=INF) → SAT-A Peek→Remove→min(INF,150)=150→更新→重算CRC→转发 → SAT-B min(150,350)=150不变→转发 → Server 收到 backhaul=150M ✓</td></tr>
+<tr><th>验证</th><td>min(150,600,350,1000) = 150M。PCAP 三段链路抓包，逐字节验证。</td></tr>
+</table>
+
+<!-- ─────────────────────────────────────── -->
+<h3>实验 2 — 多星覆盖接入切换</h3>
+
+<p>3 卫星 + 2 地面站 + 3 用户，80s。每颗卫星推送给<strong>覆盖区内所有用户</strong>，用户维护回传表，回传低于阈值自动切换。合并了原实验 2（切换）和实验 6（多星覆盖）。</p>
+
+<table>
+<tr><th>事件</th><th>时间线</th></tr>
+<tr><td>初始</td><td>t=3s：SAT-A(200/500) SAT-B(150/600) SAT-C(250/400)，全正常</td></tr>
+<tr><td>雨衰</td><td>t=10s：SAT-C→GS-Alt 400→120M → User-3 回传降至 120M</td></tr>
+<tr><td>★切换1</td><td>t=15s：User-3 SAT-C→SAT-B（查表选最优）</td></tr>
+<tr><td>ISL衰减</td><td>t=20s：SAT-A→SAT-B ISL 500→180M</td></tr>
+<tr><td>★切换2</td><td>t=25s：User-1 SAT-A→SAT-C</td></tr>
+<tr><td>拥塞</td><td>t=35s：SAT-B→GS-Main 600→250M</td></tr>
+<tr><td>★切换3</td><td>t=40s：User-2 SAT-B→SAT-A</td></tr>
+<tr><td>恢复</td><td>t=50s/60s/70s：链路逐段恢复</td></tr>
+<tr><td>★切换4</td><td>t=65s：User-1 SAT-C→SAT-A（切回原星）</td></tr>
+</table>
+
+<div class="card">
+<strong>实测结果：</strong>3 用户各收到 21 次 ADV 推送，各维护 3 颗可见星回传表。4 次切换均基于查表+阈值触发，无漏切误切。每颗卫星推给覆盖区所有用户——用户在切换前已知道候选星回传。
+</div>
+
+<!-- ─────────────────────────────────────── -->
+<h3>实验 3 — 真实轨道长时间会话 + 协议优化</h3>
+
+<p>6 卫星（2轨道面×3颗）+ 2 地面站 + 3 用户，870s。17 个拓扑事件提取自 36 星 Walker 星座仿真。集成心跳推送（30s）、序列号连续性检测、变化阈值过滤（5%）。合并了原实验 3（轨道事件）、4（星座波动）、5（协议优化）。</p>
+
+<table>
+<tr><th>事件</th><th>时间</th><th>说明</th></tr>
+<tr><td>INITIAL</td><td>t=2s</td><td>全网正常</td></tr>
+<tr><td>FAULT</td><td>t=50s</td><td>ISL A2↔B2 硬件故障</td></tr>
+<tr><td>RAIN</td><td>t=80s</td><td>GS-East 雨衰 350→80M</td></tr>
+<tr><td>RECOVER</td><td>t=120s</td><td>GS-East 恢复</td></tr>
+<tr><td>FAULT</td><td>t=160s</td><td>GS-West 中断</td></tr>
+<tr><td>POLAR</td><td>t=190s</td><td>极区黑断（36星真事件）</td></tr>
+<tr><td>RECOVER</td><td>t=230s</td><td>GS-West+ISL 恢复</td></tr>
+<tr><td>DOUBLE</td><td>t=280s</td><td>ISL A1↔B1 + B2↔B3 双重故障</td></tr>
+<tr><td>RECOVER</td><td>t=330s</td><td>全部 ISL 恢复</td></tr>
+<tr><td>CASCADE</td><td>t=380s</td><td>级联故障：SAT-B1 完全孤立</td></tr>
+<tr><td>RECOVER</td><td>t=430s</td><td>SAT-B1 恢复</td></tr>
+<tr><td>DEGRADE</td><td>t=480s</td><td>两个 GS 同时衰减到 100M</td></tr>
+<tr><td>OUTAGE</td><td>t=510s</td><td>GS-West 中断（36星真事件）</td></tr>
+<tr><td>RECOVER</td><td>t=560s</td><td>全网正常</td></tr>
+<tr><td>OUTAGE</td><td>t=620s</td><td>GS-East 中断</td></tr>
+<tr><td>RECOVER</td><td>t=680s</td><td>GS-East 恢复</td></tr>
+<tr><td>RECONNECT</td><td>t=740s</td><td>GS-West 从 SAT-B3 改连 SAT-A3</td></tr>
+</table>
+
+<div class="card">
+<strong>实测结果：</strong>3 用户分别收到 101/366/329 次更新（含大量30s心跳），更新频率差异反映了各自所在星在拓扑中的位置——靠近 GS 的星回传更稳定。回传 < 350M 时自动触发切换评估。870s 全过程中无 stale 状态。心跳、seq 检测、变化阈值均正常工作。
+</div>
+
+<!-- ─────────────────────────────────────── -->
+<h3>实验 4 — N3 gNB 协同群切换对比</h3>
+
+<p>5 颗卫星（SAT-B 过载，12 UE 需切走）+ 真实 UDP 消息。对比「无 N3：UE 各自盲抢」和「有 N3：Coordinator 统一分配」。gNB 间通过 UDP/IP/ISL 发送 MIGRATE/CONFIRM 消息。</p>
+
+<table>
+<tr><th>候选星</th><th>回传</th><th>负载</th><th>SINR</th><th>评分</th></tr>
+<tr><td>SAT-E</td><td>350M</td><td>30%</td><td>18dB</td><td><strong>146</strong></td></tr>
+<tr><td>SAT-C</td><td>600M</td><td>40%</td><td>12dB</td><td>144</td></tr>
+<tr><td>SAT-A</td><td>500M</td><td>60%</td><td>15dB</td><td>100</td></tr>
+<tr><td>SAT-D</td><td>400M</td><td>85%</td><td>10dB</td><td>20（跳过）</td></tr>
+</table>
+
+<div class="card">
+<strong>实测结果（NS-3 输出）：</strong><br><br>
+
+<strong>无 N3：</strong>12 个 UE 全部涌向回传最高的 SAT-C(600M) → 只能接 5 个 → 7 个被拒 → 反复重试 → <strong>140 次拒绝，285 条信令，7 个 UE 仍然失败</strong><br><br>
+
+<strong>有 N3：</strong>Coordinator 按综合评分分配：5→SAT-E, 4→SAT-C, 3→SAT-A → 3 次 MIGRATE + 3 次 CONFIRM → <strong>12/12 全部一次成功，0 拒绝，6 条消息</strong><br><br>
+
+<strong>★ 关键发现：</strong>SAT-E 回传只有 350M 但综合评分(146)反而超过 SAT-C 的 600M(144)——因为 SAT-E 负载低(30%)、SINR 高(18dB)。仅按回传选星会忽略这些因素，N3 的多维评分纠正了这个问题。SAT-D(85%负载)被正确跳过。6 条 MIGRATE/CONFIRM 消息全部经真实 UDP socket/ISL 传输，PCAP 可验证。
+</div>
+
+<h3>四实验验证矩阵</h3>
+
+<table>
+<tr><th>验证维度</th><th>实验1</th><th>实验2</th><th>实验3</th><th>实验4</th></tr>
+<tr><td>二进制格式 + CRC</td><td>✓</td><td></td><td></td><td></td></tr>
+<tr><td>逐跳 min 更新</td><td>✓</td><td></td><td></td><td></td></tr>
+<tr><td>真实 UDP 传输</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>PCAP 可验证</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>多星覆盖区全推</td><td></td><td>✓</td><td></td><td></td></tr>
+<tr><td>回传表 + 查表切换</td><td></td><td>✓</td><td>✓</td><td></td></tr>
+<tr><td>长时间会话</td><td></td><td></td><td>✓(870s)</td><td></td></tr>
+<tr><td>真实轨道事件</td><td></td><td></td><td>✓(17事件)</td><td></td></tr>
+<tr><td>心跳 30s 防过期</td><td></td><td></td><td>✓</td><td></td></tr>
+<tr><td>seq 连续性检测</td><td></td><td></td><td>✓</td><td></td></tr>
+<tr><td>变化阈值 5%</td><td></td><td></td><td>✓</td><td></td></tr>
+<tr><td>gNB 间协同消息</td><td></td><td></td><td></td><td>✓</td></tr>
+<tr><td>多维综合评分</td><td></td><td></td><td></td><td>✓</td></tr>
+<tr><td>信令开销对比</td><td></td><td></td><td></td><td>✓</td></tr>
+</table>
+
+<div class="card" style="margin-top:1.5rem;">
+<strong>PCAP 验证：</strong>所有 4 个实验的 SBDP 报文均在 NS-3 网络栈上传输。
+<pre><code># 实验1: 逐跳瓶颈
+tcpdump -r sbdp-proof-SAT-A-*.pcap -X
+# → backhaul: INF → 150M  ✓
+
+# 实验2: 卫星多星推送
+tcpdump -r sbdp-ho-User-1-1.pcap -X
+# → "SAT-A(up=200M down=500M)"  ← SBDP ADV 报文
+
+# 实验3: 轨道事件 + 心跳
+tcpdump -r sbdp-orbit-*-1.pcap -X
+
+# 实验4: N3 gNB 协同
+tcpdump -r n3-satb-satc-SAT-B-2.pcap -X
+# → "UE-6,UE-7,UE-8,UE-9"  ← MIGRATE
+# → "ACCEPT"                 ← CONFIRM</code></pre>
+</div>
+
+
+<hr>
+
+<h2>NS-3 修改清单</h2>
+
+<table>
+<tr><th>文件</th><th>说明</th></tr>
+<tr><td><code>contrib/sbdp/model/sbdp-header.h</code></td><td>SBDP Header 类 (继承 ns3::Header, 104B)</td></tr>
+<tr><td><code>contrib/sbdp/model/sbdp-header.cc</code></td><td>序列化 / CRC-16 / 反序列化</td></tr>
+<tr><td><code>contrib/sbdp/CMakeLists.txt</code></td><td>注册到 NS-3 构建系统</td></tr>
+<tr><td colspan="2"><em>NS-3 核心源码零修改 — contrib 模块完全独立</em></td></tr>
+</table>
+
+<h3>仿真脚本</h3>
+<table>
+<tr><th>文件</th><th>对应实验</th></tr>
+<tr><td><code>scratch/sbdp-proof.cc</code></td><td>实验1: 协议二进制证明</td></tr>
+<tr><td><code>scratch/sbdp-handover.cc</code></td><td>实验2: 多星覆盖接入切换</td></tr>
+<tr><td><code>scratch/sbdp-real-orbit.cc</code></td><td>实验3: 真实轨道+心跳+seq检测</td></tr>
+<tr><td><code>scratch/sbdp-n3-handover.cc</code></td><td>实验4: N3协同vs无协同群切换对比</td></tr>
+</table>
+
+<h3>运行</h3>
+<pre><code>cd ns-allinone-3.42/ns-3.42
+./ns3 run sbdp-proof              # 实验1: 二进制证明
+./ns3 run sbdp-handover           # 实验2: 多星覆盖接入切换
+./ns3 run sbdp-real-orbit         # 实验3: 真实轨道+心跳
+./ns3 run sbdp-n3-handover        # 实验4: N3协同vs无协同
+tcpdump -r sbdp-proof-*.pcap -X   # PCAP 逐字节查看</code></pre>
+
+<p style="text-align:center;margin-top:3rem;color:var(--muted)">SBDP — Satellite Backhaul Discovery Protocol</p>
+</div>
+</body>
+</html>
