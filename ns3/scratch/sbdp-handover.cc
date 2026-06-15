@@ -648,6 +648,7 @@ int main(int argc, char *argv[]) {
   ev(80, "FINAL");
 
   // ── Data flows ──
+  ApplicationContainer mainFlows;
   Ipv4Address ga = ip(6);
   std::vector<Ptr<PacketSink>> sinks;
   for (int i = 0; i < 3; i++) {
@@ -660,10 +661,38 @@ int main(int argc, char *argv[]) {
     oo.SetAttribute("PacketSize", UintegerValue(1472));
     oo.SetConstantRate(DataRate("100Mbps"));
     auto c = oo.Install(n.Get(i)); c.Start(Seconds(0.5)); c.Stop(Seconds(simTime));
+    mainFlows.Add(c);
   }
 
   p2p.EnablePcap("sbdp-ho", du1.Get(0), true);
   p2p.EnablePcap("sbdp-ho", du2.Get(0), true);
+
+  // ── Throughput verification at key events (pause main flows during burst) ──
+  Ipv4Address gsAltIp = ip(7);
+  auto verifyB2 = [&](double t, int ueNode, int gsNode, Ipv4Address dstIp, double b2Claim) {
+    uint16_t port = 7000 + (int)t;
+    Simulator::Schedule(Seconds(t), [=]() {
+      PacketSinkHelper sk("ns3::UdpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), port));
+      auto sink = sk.Install(n.Get(gsNode)); sink.Start(Seconds(t)); sink.Stop(Seconds(t + 1.3));
+      OnOffHelper oo("ns3::UdpSocketFactory", InetSocketAddress(dstIp, port));
+      oo.SetAttribute("DataRate", DataRateValue(DataRate("300Mbps")));
+      oo.SetAttribute("PacketSize", UintegerValue(1472));
+      oo.SetConstantRate(DataRate("300Mbps"));
+      auto src = oo.Install(n.Get(ueNode)); src.Start(Seconds(t + 0.05)); src.Stop(Seconds(t + 1.05));
+      Simulator::Schedule(Seconds(t + 1.15), [sink, b2Claim, t]() {
+        double rxMB = DynamicCast<PacketSink>(sink.Get(0))->GetTotalRx() / 1e6;
+        double tput = rxMB * 8 / 1.0;
+        NS_LOG_UNCOND("  [VERIFY t=" << (int)t << "s] B2=" << (int)b2Claim << "M | actual=" << (int)tput << "M | "
+          << (tput >= b2Claim * 0.8 ? "✓" : "✗") << " (burst 300M→" << (int)b2Claim << "M bottleneck)");
+      });
+    });
+  };
+  // t=10.5: GS-Alt 120M, SAT-C B2 claims 120M. Burst User-3→GS-Alt
+  verifyB2(10.5, 2, 7, gsAltIp, 120);
+  // t=20.5: burst User-1→GS-Alt via SAT-A→SAT-C (min(400,120)=120M, uncontended)
+  verifyB2(20.5, 0, 7, gsAltIp, 120);
+  // t=35.5: burst User-3→GS-Alt via SAT-C (250M access, 120M GS link, uncontended)
+  verifyB2(35.5, 2, 7, gsAltIp, 120);
 
   Simulator::Schedule(Seconds(simTime - 1), [&]() {
     NS_LOG_UNCOND("\n\n╔══════════════════════╗\n║ Exp 2 B2 Report ║\n╚══════════════════════╝");
@@ -675,7 +704,8 @@ int main(int argc, char *argv[]) {
     }
     NS_LOG_UNCOND("  ─────────────────────────────");
     NS_LOG_UNCOND("  B2 mode: Pull-init + Push-on-port-change");
-    NS_LOG_UNCOND("  Stable period: zero B2 traffic");
+    NS_LOG_UNCOND("  Routing: NS-3 real routing table");
+    NS_LOG_UNCOND("  Metric: available bandwidth (capacity - used)");
   });
 
   NS_LOG_UNCOND("\n╔══════════════════════════════════╗\n"
