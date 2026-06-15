@@ -107,16 +107,19 @@ void SatRouter::StopApplication() {
 void SatRouter::RecvN2(Ptr<Socket> s) {
   Ptr<Packet> pkt; Address from;
   while ((pkt = s->RecvFrom(from))) {
-    double bw = GetBestE2e();
-    std::string bl = Names::FindName(GetNode()) + "→" + m_bestGs + "("
-      + std::to_string((int)bw) + "M)";
-    uint32_t blen = bl.size(); int32_t bwInt = (int32_t)bw;
-    uint8_t buf[256];
-    memcpy(buf, &bwInt, 4); memcpy(buf + 4, &blen, 4);
-    memcpy(buf + 8, bl.c_str(), blen);
-    s->SendTo(Create<Packet>(buf, 8 + blen), 0, from);
-    NS_LOG_UNCOND("  [R " << Names::FindName(GetNode()) << "] N2→gNB: e2e="
-      << (int)bw << "M to " << m_bestGs << " (local=" << (int)GetLocalBw() << "M)");
+    // Send ALL GS entries to gNB
+    uint8_t buf[512]; int pos = 0;
+    buf[pos++] = (uint8_t)m_gs.size();
+    for (auto &p : m_gs) {
+      int32_t bw = (int32_t)p.second; memcpy(buf + pos, &bw, 4); pos += 4;
+      uint32_t nl = p.first.size(); memcpy(buf + pos, &nl, 4); pos += 4;
+      memcpy(buf + pos, p.first.c_str(), nl); pos += nl;
+      std::string bl = Names::FindName(GetNode()) + "→" + p.first + "(" + std::to_string((int)p.second) + "M)";
+      uint32_t blen = bl.size(); memcpy(buf + pos, &blen, 4); pos += 4;
+      memcpy(buf + pos, bl.c_str(), blen); pos += blen;
+    }
+    s->SendTo(Create<Packet>(buf, pos), 0, from);
+    NS_LOG_UNCOND("  [R " << Names::FindName(GetNode()) << "] N2→gNB: " << m_gs.size() << " GS, best=" << m_bestGs << ":" << (int)m_bestBw << "M");
   }
 }
 
@@ -157,7 +160,7 @@ void SatRouter::SendPush() {
   // Update snapshots
   m_nbSnapshot.clear();
   for (auto &nb : m_nb) m_nbSnapshot[nb.first] = nb.second.bw;
-  m_gsSnapshot = m_gs;
+  
 
   NS_LOG_UNCOND("  [PUSH " << myName << "] seq=" << seq << " → " << m_nb.size()
     << " nb, best=" << m_bestGs << ":" << (int)m_bestBw << "M (" << n << " GS, len=" << total << "B)");
@@ -372,26 +375,28 @@ void GnbApp::SendN2Query() {
 void GnbApp::RecvN2(Ptr<Socket> s) {
   Ptr<Packet> pkt; Address from;
   while ((pkt = s->RecvFrom(from))) {
-    uint8_t buf[256]; pkt->CopyData(buf, pkt->GetSize());
-    if (pkt->GetSize() >= 8) {
-      int32_t bwInt; memcpy(&bwInt, buf, 4); m_bw = bwInt;
-      uint32_t blen; memcpy(&blen, buf + 4, 4);
-      m_bl = std::string((char*)buf + 8, blen);
+    uint8_t buf[512]; pkt->CopyData(buf, pkt->GetSize());
+    if (pkt->GetSize() < 1) continue;
+    int n = buf[0], pos = 1;
+    for (int i = 0; i < n && pos < (int)pkt->GetSize(); i++) {
+      int32_t bw; memcpy(&bw, buf + pos, 4); pos += 4;
+      uint32_t nl; memcpy(&nl, buf + pos, 4); pos += 4;
+      std::string gs((char*)buf + pos, nl); pos += nl;
+      uint32_t blen; memcpy(&blen, buf + pos, 4); pos += 4;
+      std::string bl((char*)buf + pos, blen); pos += blen;
       NS_LOG_UNCOND("  [gNB " << Names::FindName(GetNode())
-        << "] N2 resp: e2e=" << (int)m_bw << "M " << m_bl);
-    }
-    if (m_wait) {
-      m_wait = false;
-      // Send ADV to all covered UEs with latest bottleneck
-      m_seq++;
-      for (auto &ua : m_cov) {
-        SbdpHeader h = SbdpHeader::BuildAdv(
-          Names::FindName(GetNode()), "UE", m_bw, m_bl, m_seq);
-        Ptr<Packet> p = Create<Packet>(0);
-        p->AddHeader(h);
-        m_sk->SendTo(p, 0, InetSocketAddress(ua, 8888));
+        << "] N2: " << gs << "=" << bw << "M");
+      if (m_wait) {
+        m_seq++;
+        for (auto &ua : m_cov) {
+          SbdpHeader h = SbdpHeader::BuildAdv(
+            Names::FindName(GetNode()), "UE", (double)bw, gs + ":" + bl, m_seq);
+          Ptr<Packet> p = Create<Packet>(0); p->AddHeader(h);
+          m_sk->SendTo(p, 0, InetSocketAddress(ua, 8888));
+        }
       }
     }
+    if (m_wait) m_wait = false;
   }
 }
 void GnbApp::Push() {
