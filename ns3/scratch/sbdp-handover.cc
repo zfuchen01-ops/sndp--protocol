@@ -34,6 +34,7 @@ public:
   void AddDirectGs(std::string g,double bw){m_gs[g]=bw;m_bestGs=g;m_bestBw=bw;}
   double GetBestE2e()const{return m_bestBw>0?m_bestBw:GetLocalBw();}
   double GetLocalBw()const{double b=m_out;if(m_in>0&&m_in<b)b=m_in;return b;}
+  void TriggerNow(){Simulator::Cancel(m_timer);SendEx();} // immediate exchange on topology change
 private:
   virtual void StartApplication()override;
   virtual void StopApplication()override;
@@ -208,7 +209,7 @@ int main(int argc,char*argv[]){
   Ptr<UsrApp>u3=CreateObject<UsrApp>();n.Get(2)->AddApplication(u3);u3->SetStartTime(Seconds(0.05));
   std::vector<Ptr<UsrApp>>users={u1,u2,u3};
 
-  auto pushAll=[&](){for(auto&s:sats){s.g->SendN2Query();s.g->Push();}};
+  auto pushAll=[&](){for(auto&s:sats){s.r->TriggerNow();s.g->SendN2Query();s.g->Push();}};
   auto hoCheck=[&](){for(auto&u:users){float cur=u->m_map.count(u->m_cur)?u->m_map[u->m_cur]:999.0f;if(cur<u->m_thr){float best=cur;std::string bestSat;for(auto&p:u->m_map)if(p.first!=u->m_cur&&p.second>best){best=p.second;bestSat=p.first;}if(!bestSat.empty()){NS_LOG_UNCOND("  ↳ HANDOVER "<<u->m_cur<<"→"<<bestSat);u->m_cur=bestSat;u->m_ho++;}}}};
 
   auto ev=[&](double t,const char*d){Simulator::Schedule(Seconds(t),[=](){NS_LOG_UNCOND("\n═══ t="<<t<<"s "<<d<<" ═══");pushAll();});Simulator::Schedule(Seconds(t+0.15),hoCheck);};
