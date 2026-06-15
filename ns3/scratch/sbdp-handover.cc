@@ -35,8 +35,8 @@ public:
   static TypeId GetTypeId(); SatRouter();
   void SetBw(double in, double out) { m_in = in; m_out = out; }
   void AddNeighbor(std::string n, Ipv4Address ip, double bw) { m_nb[n] = {ip, bw}; }
-  void SetNbUsed(std::string n, double u) { m_nbUsed[n] = u; }  // Mbps used on ISL
-  void AddDirectGs(std::string g, double bw, double used=0) { m_gs[g] = bw - used; m_bestGs = g; m_bestBw = bw - used; m_nexthop[g] = ""; }
+  void AddDirectGs(std::string g, double bw) { m_gsDirect[g]=bw; m_gs[g]=bw; m_bestGs=g; m_bestBw=bw; m_nexthop[g]=""; }
+  void InstallMonitor(std::string nbName, Ptr<NetDevice> dev);
   void SetRoute(std::string gs, std::string nb) { m_nexthop[gs] = nb; }
   Ipv4Address GetNbIp(const std::string &n) const { auto it=m_nb.find(n); return it!=m_nb.end()?it->second.ip:Ipv4Address::GetAny(); }
   double GetBestE2e() const { return m_bestBw > 0 ? m_bestBw : GetLocalBw(); }
@@ -58,12 +58,11 @@ private:
   struct Nb { Ipv4Address ip; double bw; };
   std::map<std::string, Nb> m_nb;
   std::map<std::string, double> m_gs;
-  std::map<std::string, double> m_nbUsed;  // Mbps used on each neighbor ISL
+  std::map<std::string, double> m_gsDirect, m_nbSnapshot;
   std::map<std::string, std::string> m_nexthop;
-
-  // Port monitoring
-  std::map<std::string, double> m_nbSnapshot;
-  std::map<std::string, double> m_gsSnapshot;
+  struct NbMon { Ptr<DropTailQueue<Packet>> queue; uint64_t lastBytes=0; double availBw=0; };
+  std::map<std::string, NbMon> m_nbMon;
+  double m_lastMonTime=0;
   EventId m_checkTimer;
   bool m_initialized = false;
   uint16_t m_seq = 0;  // B2 message sequence number
@@ -76,6 +75,12 @@ TypeId SatRouter::GetTypeId() {
   return tid;
 }
 SatRouter::SatRouter() {}
+void SatRouter::InstallMonitor(std::string nbName, Ptr<NetDevice> dev) {
+  auto p2p = DynamicCast<PointToPointNetDevice>(dev);
+  auto& m = m_nbMon[nbName];
+  m.queue = DynamicCast<DropTailQueue<Packet>>(p2p->GetQueue());
+  m.lastBytes = m.queue ? m.queue->GetTotalReceivedBytes() : 0;
+}
 
 void SatRouter::StartApplication() {
   m_n2sk = Socket::CreateSocket(GetNode(), UdpSocketFactory::GetTypeId());
@@ -239,8 +244,8 @@ void SatRouter::RecvEx(Ptr<Socket> s) {
     int pos = 9 + nameLen;
 
     double nbLink = 1e9;
-    if (m_nb.count(nbName)) { nbLink = m_nb[nbName].bw - (m_nbUsed.count(nbName)?m_nbUsed[nbName]:0); }
-    if (nbLink < 0) nbLink = 0;  // available can't be negative
+    if (m_nbMon.count(nbName)) { nbLink = m_nbMon[nbName].availBw; }
+    else if (m_nb.count(nbName)) nbLink = m_nb[nbName].bw;  // fallback to capacity
 
     if (type == 1) {
       // ── REQUEST: reply with our GS info ──
@@ -283,62 +288,48 @@ void SatRouter::RecvEx(Ptr<Socket> s) {
 // ── Port change detection ──
 void SatRouter::CheckPortChange() {
   std::string my = Names::FindName(GetNode());
+  double now = Simulator::Now().GetSeconds();
+
+  // Real per-neighbor monitoring: read queue counters
+  double dt = (m_lastMonTime > 0) ? (now - m_lastMonTime) : 0.2;
+  if (dt < 0.01) dt = 0.2; m_lastMonTime = now;
+  for (auto &kv : m_nbMon) {
+    if (!kv.second.queue) continue;
+    uint64_t cur = kv.second.queue->GetTotalReceivedBytes();
+    uint64_t delta = cur - kv.second.lastBytes;
+    double tputMbps = (delta * 8.0 / 1e6) / dt;
+    double cap = m_nb.count(kv.first) ? m_nb[kv.first].bw : 1e9;
+    kv.second.availBw = cap - tputMbps;
+    if (kv.second.availBw < 0) kv.second.availBw = 0;
+    kv.second.lastBytes = cur;
+  }
+  for (auto &gs : m_gsDirect) {
+    if (m_nbMon.count(gs.first)) m_gs[gs.first] = m_nbMon[gs.first].availBw;
+  }
 
   if (!m_initialized && !m_gs.empty()) {
     m_initialized = true;
     m_nbSnapshot.clear();
     for (auto &nb : m_nb) m_nbSnapshot[nb.first] = nb.second.bw;
-    m_gsSnapshot = m_gs;
     SendPush();
   } else if (m_initialized) {
     bool changed = false;
-
-    if (m_nb.size() != m_nbSnapshot.size()) {
-      changed = true;
-    } else {
-      for (auto &nb : m_nb) {
-        if (!m_nbSnapshot.count(nb.first) ||
-            std::abs(m_nbSnapshot[nb.first] - nb.second.bw) > 0.5) {
-          changed = true; break;
-        }
-      }
-    }
-
-    if (!changed && m_gs.size() != m_gsSnapshot.size()) {
-      changed = true;
-    } else if (!changed) {
-      for (auto &gs : m_gs) {
-        if (!m_gsSnapshot.count(gs.first) ||
-            std::abs(m_gsSnapshot[gs.first] - gs.second) > 0.5) {
-          changed = true; break;
-        }
-      }
-    }
-
+    if (m_nb.size() != m_nbSnapshot.size()) changed = true;
+    else for (auto &nb : m_nb) if (!m_nbSnapshot.count(nb.first) || std::abs(m_nbSnapshot[nb.first] - nb.second.bw) > 0.5) { changed = true; break; }
     if (changed) {
-      // Invalidate GS entries routed through neighbors whose links changed
       for (auto &nb : m_nb) {
-        double oldBw = m_nbSnapshot.count(nb.first) ? m_nbSnapshot[nb.first] : 0;
-        if (std::abs(nb.second.bw - oldBw) > 0.5 || oldBw == 0) {
-          for (auto &gs : m_nexthop) {
-            if (gs.second == nb.first) {
-              NS_LOG_UNCOND("  [MON " << my << "] re-route " << gs.first
-                << " via " << nb.first << " (link " << (int)oldBw << "→" << (int)nb.second.bw << "M)");
-              m_gs[gs.first] = 0;  // force re-query on next push propagation
-            }
-          }
-        }
+        double old = m_nbSnapshot.count(nb.first) ? m_nbSnapshot[nb.first] : 0;
+        if (std::abs(nb.second.bw - old) > 0.5 || old == 0)
+          for (auto &gs : m_nexthop) if (gs.second == nb.first) m_gs[gs.first] = 0;
       }
-      m_bestBw = 0;
-      for (auto &p : m_gs) if (p.second > m_bestBw) { m_bestBw = p.second; m_bestGs = p.first; }
       SendPush();
-      // Update snapshot after push
       m_nbSnapshot.clear();
       for (auto &nb : m_nb) m_nbSnapshot[nb.first] = nb.second.bw;
-      NS_LOG_UNCOND("  [MON " << my << "] local port change → PUSH (best=" << m_bestGs << ":" << (int)m_bestBw << "M)");
+      NS_LOG_UNCOND("  [MON " << my << "] port change → PUSH (best=" << m_bestGs << ":" << m_bestBw << "M)");
     }
   }
-
+  m_bestBw = 0;
+  for (auto &p : m_gs) if (p.second > m_bestBw) { m_bestBw = p.second; m_bestGs = p.first; }
   m_checkTimer = Simulator::Schedule(Seconds(0.20), &SatRouter::CheckPortChange, this);
 }
 
@@ -491,7 +482,8 @@ int main(int argc, char *argv[]) {
   };
 
   dsa_sb = L(3, 4, 500, 10); dsb_gs = L(4, 6, 600, 10);
-  L(5, 3, 400, 15); dsc_gs = L(5, 7, 400, 10); L(4, 5, 350, 15);
+  auto dsa_sc = L(5, 3, 400, 15); dsc_gs = L(5, 7, 400, 10);
+  auto dsb_sc = L(4, 5, 350, 15);
   du1 = L(0, 3, 200, 5); du2 = L(1, 4, 150, 5); du3 = L(2, 5, 250, 5);
   Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
@@ -519,10 +511,13 @@ int main(int argc, char *argv[]) {
   sats[2].r->AddNeighbor("SAT-A", ip(3), 400);
   sats[2].r->AddNeighbor("SAT-B", ip(4), 350);
   // Per-link utilization from data flows (U1→A→B→GS, U2→B→GS, U3→C→B→GS)
-  sats[0].r->SetNbUsed("SAT-B", 100);
-  sats[1].r->SetNbUsed("SAT-A", 0);
-  sats[1].r->SetNbUsed("SAT-C", 0);
-  sats[2].r->SetNbUsed("SAT-B", 100);
+  // Install real per-neighbor queue monitors
+  sats[0].r->InstallMonitor("SAT-B", dsa_sb.Get(0));
+  sats[0].r->InstallMonitor("SAT-C", dsa_sc.Get(1));
+  sats[1].r->InstallMonitor("SAT-A", dsa_sb.Get(1));
+  sats[1].r->InstallMonitor("SAT-C", dsb_sc.Get(0));
+  sats[2].r->InstallMonitor("SAT-A", dsa_sc.Get(0));
+  sats[2].r->InstallMonitor("SAT-B", dsb_sc.Get(1));
   // Compute routes from NS-3 real routing table
   auto computeRoutes = [&]() {
     std::map<std::string, Ipv4Address> gsIps = {{"GS-Main", ip(6)}, {"GS-Alt", ip(7)}};
@@ -548,8 +543,10 @@ int main(int argc, char *argv[]) {
   computeRoutes();
 
   // Direct GS connections (capacity, used)
-  sats[1].r->AddDirectGs("GS-Main", 600, 300);  // U1+U2+U3 all via SAT-B→GS
-  sats[2].r->AddDirectGs("GS-Alt", 400, 0);
+  sats[1].r->AddDirectGs("GS-Main", 600);
+  sats[2].r->AddDirectGs("GS-Alt", 400);
+  sats[1].r->InstallMonitor("GS-Main", dsb_gs.Get(0));
+  sats[2].r->InstallMonitor("GS-Alt", dsc_gs.Get(0));
 
   // Coverage
   for (int i = 0; i < 3; i++) {
