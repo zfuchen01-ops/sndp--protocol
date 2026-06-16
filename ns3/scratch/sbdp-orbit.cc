@@ -35,7 +35,7 @@ public:
   static TypeId GetTypeId(); SatRouter();
   void SetBw(double in, double out) { m_in = in; m_out = out; }
   void AddNeighbor(std::string n, Ipv4Address ip, double bw) { m_nb[n] = {ip, bw}; }
-  void AddDirectGs(std::string g, double bw) { m_gsDirect[g]=bw; m_gs[g]=bw; m_bestGs=g; m_bestBw=bw; m_nexthop[g]=""; }
+  void AddDirectGs(std::string g, double bw) { m_gsDirect[g]=bw; m_gs[g]=bw; m_bestGs=g; m_bestBw=bw; m_nexthop[g]=""; m_gsSource[g]=""; }
   void InstallMonitor(std::string nbName, Ptr<NetDevice> dev);
   void SetRoute(std::string gs, std::string nb) { m_nexthop[gs] = nb; }
   Ipv4Address GetNbIp(const std::string &n) const { auto it=m_nb.find(n); return it!=m_nb.end()?it->second.ip:Ipv4Address::GetAny(); }
@@ -44,9 +44,9 @@ public:
   struct Nb { Ipv4Address ip; double bw; };
   std::map<std::string,Nb>m_nb;
   void UpdateBest(){m_bestBw=0;for(auto&p:m_gs)if(p.second>m_bestBw){m_bestBw=p.second;m_bestGs=p.first;}}
-  void ClearTopo(){m_nb.clear();m_gs.clear();m_gsDirect.clear();m_nexthop.clear();}
+  void ClearTopo(){m_nb.clear();m_gs.clear();m_gsDirect.clear();m_nexthop.clear();m_gsSource.clear();}
   std::map<std::string,double>m_gs;
-  std::map<std::string,std::string>m_nexthop;
+  std::map<std::string,std::string>m_nexthop,m_gsSource;
 
 private:
   virtual void StartApplication() override;
@@ -156,17 +156,33 @@ void SatRouter::SendPush() {
   uint16_t total = (uint16_t)pos;
   memcpy(buf + 4, &total, 2);
 
-  Ptr<Packet> pkt = Create<Packet>(buf, pos);
-  for (auto &nb : m_nb)
-    m_sk->SendTo(pkt, 0, InetSocketAddress(nb.second.ip, 9997));
+  // Split Horizon: per-neighbor packet, exclude GS learned from that neighbor
+  int totalSent=0, totalBytes=0;
+  for (auto &nb : m_nb) {
+    // Build per-neighbor packet
+    uint8_t nbuf[512]; int np=0;
+    nbuf[np++]=0x42;nbuf[np++]=0x32;nbuf[np++]=1;nbuf[np++]=0;np+=2;
+    uint16_t nseq=m_seq++;memcpy(nbuf+np,&nseq,2);np+=2;
+    nbuf[np++]=(uint8_t)myName.size();memcpy(nbuf+np,myName.c_str(),myName.size());np+=myName.size();
+    int nn=0, nnPos=np; np++; // placeholder for n
+    for(auto&p:m_gs){
+      if(m_gsSource.count(p.first)&&m_gsSource[p.first]==nb.first)continue; // Split Horizon
+      uint8_t nl=p.first.size();nbuf[np++]=nl;memcpy(nbuf+np,p.first.c_str(),nl);np+=nl;
+      int32_t bw=(int32_t)p.second;memcpy(nbuf+np,&bw,4);np+=4;nn++;
+    }
+    if(nn==0)continue; // nothing to send to this neighbor
+    nbuf[nnPos]=(uint8_t)nn;
+    uint16_t ntotal=(uint16_t)np;memcpy(nbuf+4,&ntotal,2);
+    m_sk->SendTo(Create<Packet>(nbuf,np),0,InetSocketAddress(nb.second.ip,9997));
+    totalSent++;totalBytes+=np;
+  }
 
   // Update snapshots
   m_nbSnapshot.clear();
   for (auto &nb : m_nb) m_nbSnapshot[nb.first] = nb.second.bw;
-  
 
-  NS_LOG_UNCOND("  [PUSH " << myName << "] seq=" << seq << " → " << m_nb.size()
-    << " nb, best=" << m_bestGs << ":" << (int)m_bestBw << "M (" << n << " GS, len=" << total << "B)");
+  NS_LOG_UNCOND("  [PUSH " << myName << "] seq=" << seq << " → " << totalSent << "/" << m_nb.size()
+    << " nb, best=" << m_bestGs << ":" << (int)m_bestBw << "M (" << n << " GS, " << totalBytes << "B)");
 }
 
 // ── B2 Send REQUEST (type=1) — initial pull ──
@@ -272,7 +288,7 @@ void SatRouter::RecvEx(Ptr<Socket> s) {
         if (m_nexthop[gs] == "") continue;     // direct → authoritative, don't override
         if (m_nexthop[gs] != nbName) continue; // not our next-hop → ignore
         double newBw = std::min(nbLink, (double)nbBw);
-        if (!m_gs.count(gs) || newBw != m_gs[gs]) { m_gs[gs] = newBw; chg = true; }
+        if (!m_gs.count(gs) || newBw != m_gs[gs]) { m_gs[gs] = newBw; m_gsSource[gs] = nbName; chg = true; }
       }
       if (chg) {
         m_bestBw = 0;
