@@ -528,6 +528,16 @@ int main(int argc, char *argv[]) {
   // Coverage: all sats cover both UEs
   for (int i = 0; i < 6; i++) { sats[i].g->AddCoverage(ip(0)); sats[i].g->AddCoverage(ip(1)); }
 
+  // ── Install real per-neighbor queue monitors ──
+  sats[0].r->InstallMonitor("A2", dA12.Get(0)); sats[1].r->InstallMonitor("A1", dA12.Get(1));
+  sats[1].r->InstallMonitor("A3", dA23.Get(0)); sats[2].r->InstallMonitor("A2", dA23.Get(1));
+  sats[3].r->InstallMonitor("B2", dB12.Get(0)); sats[4].r->InstallMonitor("B1", dB12.Get(1));
+  sats[4].r->InstallMonitor("B3", dB23.Get(0)); sats[5].r->InstallMonitor("B2", dB23.Get(1));
+  sats[0].r->InstallMonitor("B1", dAB1.Get(0)); sats[3].r->InstallMonitor("A1", dAB1.Get(1));
+  sats[1].r->InstallMonitor("B2", dAB2.Get(0)); sats[4].r->InstallMonitor("A2", dAB2.Get(1));
+  sats[0].r->InstallMonitor("GS-E", dGsE.Get(0));
+  sats[5].r->InstallMonitor("GS-W", dGsW.Get(0));
+
   // ── Users ──
   Ptr<UsrApp> u1 = CreateObject<UsrApp>(); n.Get(0)->AddApplication(u1); u1->SetStartTime(Seconds(0.05));
   Ptr<UsrApp> u2 = CreateObject<UsrApp>(); n.Get(1)->AddApplication(u2); u2->SetStartTime(Seconds(0.05));
