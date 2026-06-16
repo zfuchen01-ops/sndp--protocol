@@ -488,17 +488,33 @@ PointToPointHelper p2p;p2p.SetQueue("ns3::DropTailQueue");Ipv4AddressHelper ipv4
 auto L=[&](int a,int b,double bw,double d=5){p2p.SetDeviceAttribute("DataRate",StringValue(std::to_string((int)bw)+"Mbps"));p2p.SetChannelAttribute("Delay",StringValue(std::to_string(d)+"ms"));auto dev=p2p.Install(n.Get(a),n.Get(b));char base[32];snprintf(base,32,"10.%u.0.0",sn++);ipv4.SetBase(base,"255.255.255.0");ipv4.Assign(dev);return dev;};
   std::map<std::pair<int,int>,NetDeviceContainer>linkDevs;
   auto LK=[&](int a,int b,double bw,double d=5){auto dev=L(a,b,bw,d);linkDevs[{a,b}]=dev;return dev;};
-  LK(0,1,200);LK(0,3,200);LK(1,2,200);LK(1,4,180);LK(0,12,350);LK(1,12,350);
-  LK(2,3,200);LK(3,6,180);LK(4,5,200);LK(4,7,200);LK(5,6,200);
-  LK(6,7,200);LK(7,14,350);LK(8,9,200);LK(8,11,200);LK(9,10,200);LK(10,11,200);
+  LK(0,1,200);
+  LK(0,3,200);
+  LK(0,12,80);
+  LK(0,12,350);
+  LK(1,2,200);
+  LK(1,4,180);
+  LK(1,12,350);
+  LK(2,3,200);
+  LK(3,6,180);
+  LK(4,5,200);
+  LK(4,7,200);
+  LK(5,6,200);
+  LK(6,7,200);
+  LK(7,14,350);
+  LK(8,9,200);
+  LK(8,11,200);
+  LK(9,10,200);
+  LK(10,11,200);
   L(15,0,300,2);L(16,0,300,2);L(15,4,300,2);L(16,4,300,2);L(12,13,1000,2);
 Ipv4GlobalRoutingHelper::PopulateRoutingTables();auto ip=[&](int i)->Ipv4Address{return n.Get(i)->GetObject<Ipv4>()->GetAddress(1,0).GetLocal();};
 struct Sat{Ptr<SatRouter>r;Ptr<GnbApp>g;};std::vector<Sat>sats(12);
 for(int i=0;i<12;i++){sats[i].r=CreateObject<SatRouter>();sats[i].g=CreateObject<GnbApp>();n.Get(i)->AddApplication(sats[i].r);sats[i].r->SetStartTime(Seconds(0));n.Get(i)->AddApplication(sats[i].g);sats[i].g->SetStartTime(Seconds(0.05));}
 struct OE{double t;std::string d;std::vector<std::vector<int>>e;};std::vector<OE>oe;
   oe.push_back({0,"INITIAL",{{1,2,200},{2,3,200},{3,4,200},{4,1,200},{5,6,200},{6,7,200},{7,8,200},{8,5,200},{9,10,200},{10,11,200},{11,12,200},{12,9,200},{15,8,350},{13,1,350}}});
-  oe.push_back({25,"NEW: 2,5,180 4,7,180",{{1,2,200},{2,3,200},{3,4,200},{4,1,200},{5,6,200},{6,7,200},{7,8,200},{8,5,200},{9,10,200},{10,11,200},{11,12,200},{12,9,200},{2,5,180},{4,7,180},{15,8,350}}});
-  oe.push_back({70,"NEW: 13,2,350",{{1,2,200},{2,3,200},{3,4,200},{4,1,200},{5,6,200},{6,7,200},{7,8,200},{8,5,200},{9,10,200},{10,11,200},{11,12,200},{12,9,200},{2,5,180},{4,7,180},{13,2,350},{15,8,350}}});
+  oe.push_back({25,"NEW: 2,5,180 4,7,180",{{1,2,200},{2,3,200},{3,4,200},{4,1,200},{5,6,200},{6,7,200},{7,8,200},{8,5,200},{9,10,200},{10,11,200},{11,12,200},{12,9,200},{2,5,180},{4,7,180},{15,8,350},{13,1,350}}});
+  oe.push_back({40,"RAIN: GS-E 350→80M",{{1,2,200},{2,3,200},{3,4,200},{4,1,200},{5,6,200},{6,7,200},{7,8,200},{8,5,200},{9,10,200},{10,11,200},{11,12,200},{12,9,200},{2,5,180},{4,7,180},{15,8,350},{13,1,80}}});
+  oe.push_back({70,"NEW: 13,2,350",{{1,2,200},{2,3,200},{3,4,200},{4,1,200},{5,6,200},{6,7,200},{7,8,200},{8,5,200},{9,10,200},{10,11,200},{11,12,200},{12,9,200},{2,5,180},{4,7,180},{13,2,350},{15,8,350},{13,1,350}}});
 auto at=[&](const OE&ev){for(int i=0;i<12;i++)sats[i].r->ClearTopo();
 for(auto&e:ev.e){int a=e[0]-1,b=e[1]-1,bw=e[2];
 if(a<12&&b<12){sats[a].r->AddNeighbor(satNames[b],ip(b),bw);sats[b].r->AddNeighbor(satNames[a],ip(a),bw);}

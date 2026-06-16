@@ -229,7 +229,7 @@ A4          已从A1学到GS-E=200      (不推A3,A1)
 │                                                   │
 │  验证链路:                                         │
 │  1. P2P链路本身就是ISL/馈电链路的物理模拟           │
-│  2. SetDataRate() 动态改变链路带宽                 │
+│  2. SetDataRate() 开关/增减链路带宽 (新增ISL, 新增馈电)                 │
 │  3. Queue::GetTotalReceivedBytes() 数真实字节      │
 │  4. PacketSink::GetTotalRx() 端到端统计            │
 │  5. PCAP 抓包, tcpdump -X 查看B2报文原始字节       │
