@@ -62,6 +62,23 @@ hr{border:none;border-top:1px solid rgba(255,255,255,.06);margin:1.5rem 0;}
 └────────────────────────────────────────────────┘
 Type: 0=PUSH(端口变化) 1=REQUEST(初始拉) 2=REPLY(回复请求)</code></pre>
 
+<h2>协议设计</h2>
+
+<div class="flex">
+  <div class="card"><strong>定界</strong><br>Magic 0x42 0x32 ("B2")<br>非B2包直接丢弃</div>
+  <div class="card"><strong>标识</strong><br>Version=1<br>Type: 0=PUSH 1=REQUEST 2=REPLY</div>
+  <div class="card"><strong>长度</strong><br>TotalLength(uint16)<br>显式自描述，不安全推导</div>
+  <div class="card"><strong>去重</strong><br>Sequence Number(uint16)<br>区分新旧消息</div>
+</div>
+
+<div class="card">
+<strong>协议骨架——对标 OSPF/BGP/RIP：</strong>标准协议的四个定界问题，B2 全部回答。<br>
+<strong>语法（Wire Format）：</strong>每字节位置固定，对方闭着眼知道怎么解析。<br>
+<strong>语义（Message Semantics）：</strong>PUSH=我变了主动告诉你，REQUEST=我刚上线问你要，REPLY=你问我才回的。<br>
+<strong>时序（State Machine）：</strong>启动→REQUEST，端口变→PUSH，收到REQUEST→REPLY，稳定期→沉默。<br>
+<strong>处理规则：</strong>min(链路带宽−已用, 收到瓶颈)，逐跳累加路径开销。
+</div>
+
 <h2>三实验验证矩阵</h2>
 
 <table>
