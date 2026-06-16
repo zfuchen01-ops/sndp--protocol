@@ -41,6 +41,12 @@ public:
   Ipv4Address GetNbIp(const std::string &n) const { auto it=m_nb.find(n); return it!=m_nb.end()?it->second.ip:Ipv4Address::GetAny(); }
   double GetBestE2e() const { return m_bestBw > 0 ? m_bestBw : GetLocalBw(); }
   double GetLocalBw() const { double b = m_out; if (m_in > 0 && m_in < b) b = m_in; return b; }
+  struct Nb { Ipv4Address ip; double bw; };
+  std::map<std::string,Nb>m_nb;
+  void UpdateBest(){m_bestBw=0;for(auto&p:m_gs)if(p.second>m_bestBw){m_bestBw=p.second;m_bestGs=p.first;}}
+  void ClearTopo(){m_nb.clear();m_gs.clear();m_gsDirect.clear();m_nexthop.clear();}
+  std::map<std::string,double>m_gs;
+  std::map<std::string,std::string>m_nexthop;
 
 private:
   virtual void StartApplication() override;
@@ -55,11 +61,7 @@ private:
   Ptr<Socket> m_n2sk, m_sk;
   double m_in = 0, m_out = 0, m_bestBw = 0;
   std::string m_bestGs;
-  struct Nb { Ipv4Address ip; double bw; };
-  std::map<std::string, Nb> m_nb;
-  std::map<std::string, double> m_gs;
   std::map<std::string, double> m_gsDirect, m_nbSnapshot;
-  std::map<std::string, std::string> m_nexthop;
   struct NbMon { Ptr<DropTailQueue<Packet>> queue; uint64_t lastBytes=0; double availBw=0; };
   std::map<std::string, NbMon> m_nbMon;
   double m_lastMonTime=0;
@@ -460,155 +462,49 @@ UsrApp::UsrApp() {}
 
 // ═══════════════════ main ═══════════════════
 
-
-// ═══════ Exp 3 — 6-sat orbital ISL dynamics ═══════
-int main(int argc, char *argv[]) {
-  double simTime = 100;
-  NodeContainer n; n.Create(10);
-  Names::Add("U1",n.Get(0)); Names::Add("U2",n.Get(1));
-  Names::Add("A1",n.Get(2)); Names::Add("A2",n.Get(3)); Names::Add("A3",n.Get(4));
-  Names::Add("B1",n.Get(5)); Names::Add("B2",n.Get(6)); Names::Add("B3",n.Get(7));
-  Names::Add("GS-E",n.Get(8)); Names::Add("GS-W",n.Get(9));
-  InternetStackHelper inet; inet.Install(n);
-  PointToPointHelper p2p; p2p.SetQueue("ns3::DropTailQueue"); Ipv4AddressHelper ipv4; uint32_t sn=0;
-  auto L=[&](int a,int b,double bw,double d=5){
-    p2p.SetDeviceAttribute("DataRate",StringValue(std::to_string((int)bw)+"Mbps"));
-    p2p.SetChannelAttribute("Delay",StringValue(std::to_string(d)+"ms"));
-    auto dev=p2p.Install(n.Get(a),n.Get(b));
-    char base[32]; snprintf(base,32,"10.%u.0.0",sn++); ipv4.SetBase(base,"255.255.255.0"); ipv4.Assign(dev); return dev;
-  };
-  auto setL=[&](NetDeviceContainer &dev,double bw){DynamicCast<PointToPointNetDevice>(dev.Get(0))->SetDataRate(DataRate(bw*1e6));DynamicCast<PointToPointNetDevice>(dev.Get(1))->SetDataRate(DataRate(bw*1e6));};
-  // Intra-plane ISL rings
-  auto dA12=L(2,3,200); auto dA23=L(3,4,200);
-  auto dB12=L(5,6,200); auto dB23=L(6,7,200);
-  // Inter-plane ISL
-  auto dAB1=L(2,5,180); auto dAB2=L(3,6,180);
-  // Feeder links
-  auto dGsE=L(2,8,350); auto dGsW=L(7,9,300);
-  // User access + inter-GS
-  L(0,2,300,2); L(1,2,300,2); L(8,9,1000,2);
-  Ipv4GlobalRoutingHelper::PopulateRoutingTables();
-  auto ip=[&](int i)->Ipv4Address{return n.Get(i)->GetObject<Ipv4>()->GetAddress(1,0).GetLocal();};
-
-  // ── SatRouters + gNBs ──
-  struct Sat { Ptr<SatRouter> r; Ptr<GnbApp> g; };
-  std::vector<Sat> sats(6);
-  for (int i = 0; i < 6; i++) {
-    sats[i].r = CreateObject<SatRouter>();
-    sats[i].g = CreateObject<GnbApp>();
-    n.Get(2 + i)->AddApplication(sats[i].r); sats[i].r->SetStartTime(Seconds(0));
-    n.Get(2 + i)->AddApplication(sats[i].g); sats[i].g->SetStartTime(Seconds(0.05));
-  }
-
-  // ── Topology ──
-  sats[0].r->SetBw(300,600); // A1
-  sats[0].r->AddNeighbor("A2",ip(3),200); sats[0].r->AddNeighbor("B1",ip(5),180);
-  sats[0].r->AddDirectGs("GS-E",350); sats[0].r->SetRoute("GS-E","");
-
-  sats[1].r->SetBw(300,600); // A2
-  sats[1].r->AddNeighbor("A1",ip(2),200); sats[1].r->AddNeighbor("A3",ip(4),200);
-  sats[1].r->AddNeighbor("B2",ip(6),180); sats[1].r->SetRoute("GS-E","A1");
-
-  sats[2].r->SetBw(300,600); // A3
-  sats[2].r->AddNeighbor("A2",ip(3),200); sats[2].r->SetRoute("GS-E","A1");
-
-  sats[3].r->SetBw(300,600); // B1
-  sats[3].r->AddNeighbor("B2",ip(6),200); sats[3].r->AddNeighbor("A1",ip(2),180);
-  sats[3].r->SetRoute("GS-W","B3"); sats[3].r->SetRoute("GS-E","A1");
-
-  sats[4].r->SetBw(300,600); // B2
-  sats[4].r->AddNeighbor("B1",ip(5),200); sats[4].r->AddNeighbor("B3",ip(7),200);
-  sats[4].r->AddNeighbor("A2",ip(3),180);
-  sats[4].r->SetRoute("GS-W","B3"); sats[4].r->SetRoute("GS-E","A2");
-
-  sats[5].r->SetBw(300,600); // B3
-  sats[5].r->AddNeighbor("B2",ip(6),200); sats[5].r->AddDirectGs("GS-W",300);
-  sats[5].r->SetRoute("GS-W","");
-
-  // Coverage: all sats cover both UEs
-  for (int i = 0; i < 6; i++) { sats[i].g->AddCoverage(ip(0)); sats[i].g->AddCoverage(ip(1)); }
-
-  // ── Install real per-neighbor queue monitors ──
-  sats[0].r->InstallMonitor("A2", dA12.Get(0)); sats[1].r->InstallMonitor("A1", dA12.Get(1));
-  sats[1].r->InstallMonitor("A3", dA23.Get(0)); sats[2].r->InstallMonitor("A2", dA23.Get(1));
-  sats[3].r->InstallMonitor("B2", dB12.Get(0)); sats[4].r->InstallMonitor("B1", dB12.Get(1));
-  sats[4].r->InstallMonitor("B3", dB23.Get(0)); sats[5].r->InstallMonitor("B2", dB23.Get(1));
-  sats[0].r->InstallMonitor("B1", dAB1.Get(0)); sats[3].r->InstallMonitor("A1", dAB1.Get(1));
-  sats[1].r->InstallMonitor("B2", dAB2.Get(0)); sats[4].r->InstallMonitor("A2", dAB2.Get(1));
-  sats[0].r->InstallMonitor("GS-E", dGsE.Get(0));
-  sats[5].r->InstallMonitor("GS-W", dGsW.Get(0));
-
-  // ── Users ──
-  Ptr<UsrApp> u1 = CreateObject<UsrApp>(); n.Get(0)->AddApplication(u1); u1->SetStartTime(Seconds(0.05));
-  Ptr<UsrApp> u2 = CreateObject<UsrApp>(); n.Get(1)->AddApplication(u2); u2->SetStartTime(Seconds(0.05));
-  std::vector<Ptr<UsrApp>> users = {u1, u2};
-
-  // ── Data flows: both users send 100Mbps to GS-E ──
-  Ipv4Address gsIp = ip(8);
-  std::vector<Ptr<PacketSink>> sinks;
-  for (int i = 0; i < 2; i++) {
-    PacketSinkHelper sk("ns3::UdpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), 5001 + i));
-    auto a = sk.Install(n.Get(8)); a.Start(Seconds(0.3)); a.Stop(Seconds(simTime));
-    sinks.push_back(DynamicCast<PacketSink>(a.Get(0)));
-    OnOffHelper oo("ns3::UdpSocketFactory", InetSocketAddress(gsIp, 5001 + i));
-    oo.SetAttribute("DataRate", DataRateValue(DataRate("100Mbps")));
-    oo.SetAttribute("PacketSize", UintegerValue(1472));
-    oo.SetConstantRate(DataRate("100Mbps"));
-    auto c = oo.Install(n.Get(i)); c.Start(Seconds(0.5)); c.Stop(Seconds(simTime));
-  }
-
-  // ── gNB push helper ──
-  auto pushAll = [&]() { for (auto &s : sats) { s.g->Push(); } };
-
-  // ═══ Orbital Events ═══
-  Simulator::Schedule(Seconds(20), [&]() {
-    NS_LOG_UNCOND("\n═══ t=20s A2↔B2 inter-plane ISL lost ═══");
-    setL(dAB2, 0);
-    sats[1].r->AddNeighbor("B2", ip(6), 0);
-    sats[4].r->AddNeighbor("A2", ip(3), 0);
-    pushAll();
-  });
-
-  Simulator::Schedule(Seconds(40), [&]() {
-    NS_LOG_UNCOND("\n═══ t=40s GS-E rain fade 350→80M ═══");
-    setL(dGsE, 80);
-    sats[0].r->AddDirectGs("GS-E", 80);
-    pushAll();
-  });
-
-  Simulator::Schedule(Seconds(60), [&]() {
-    NS_LOG_UNCOND("\n═══ t=60s A2↔B2 ISL restored ═══");
-    setL(dAB2, 180);
-    sats[1].r->AddNeighbor("B2", ip(6), 180);
-    sats[4].r->AddNeighbor("A2", ip(3), 180);
-    pushAll();
-  });
-
-  Simulator::Schedule(Seconds(80), [&]() {
-    NS_LOG_UNCOND("\n═══ t=80s GS-E recovered 80→350M ═══");
-    setL(dGsE, 350);
-    sats[0].r->AddDirectGs("GS-E", 350);
-    pushAll();
-  });
-
-  // ── PCAP ──
-  p2p.EnablePcap("sbdp-orbit", n.Get(2)->GetDevice(0), true);
-
-  // ── Report ──
-  Simulator::Schedule(Seconds(simTime - 2), [&]() {
-    NS_LOG_UNCOND("\n═══ Exp 3 Report ═══");
-    for (int i = 0; i < 2; i++) {
-      double mb = sinks[i]->GetTotalRx() / 1e6;
-      NS_LOG_UNCOND("  U" << (i + 1) << ": data=" << mb << "MB cur=" << users[i]->m_cur);
-    }
-    for (int i = 0; i < 6; i++)
-      NS_LOG_UNCOND("  " << Names::FindName(n.Get(2 + i)) << " B2=" << sats[i].r->GetBestE2e() << "M");
-    NS_LOG_UNCOND("  Events: A2↔B2 ISL lost/restored + GS-E rain/recovered");
-  });
-
-  NS_LOG_UNCOND("\n═══ Exp 3: Orbital ISL Dynamics ═══\n");
-  Simulator::Stop(Seconds(simTime));
-  Simulator::Run();
-  Simulator::Destroy();
-  return 0;
-}
+int main(int,char**){double simTime=100;NodeContainer n;n.Create(17);
+const char* satNames[]={"A1","A2","A3","A4","B1","B2","B3","B4","C1","C2","C3","C4"};
+for(int i=0;i<12;i++)Names::Add(satNames[i],n.Get(i));
+Names::Add("GS-E",n.Get(12));Names::Add("GS-W",n.Get(13));Names::Add("GS-S",n.Get(14));
+Names::Add("U1",n.Get(15));Names::Add("U2",n.Get(16));
+InternetStackHelper inet;inet.Install(n);
+PointToPointHelper p2p;p2p.SetQueue("ns3::DropTailQueue");Ipv4AddressHelper ipv4;uint32_t sn=0;
+auto L=[&](int a,int b,double bw,double d=5){p2p.SetDeviceAttribute("DataRate",StringValue(std::to_string((int)bw)+"Mbps"));p2p.SetChannelAttribute("Delay",StringValue(std::to_string(d)+"ms"));auto dev=p2p.Install(n.Get(a),n.Get(b));char base[32];snprintf(base,32,"10.%u.0.0",sn++);ipv4.SetBase(base,"255.255.255.0");ipv4.Assign(dev);return dev;};
+  L(0,1,200);
+  L(0,3,200);
+  L(1,2,200);
+  L(1,4,180);
+  L(0,12,350);L(1,12,350);
+  L(2,3,200);
+  L(3,6,180);
+  L(4,5,200);
+  L(4,7,200);
+  L(5,6,200);
+  L(6,7,200);
+  L(7,14,350);
+  L(8,9,200);
+  L(8,11,200);
+  L(9,10,200);
+  L(10,11,200);
+  L(15,0,300,2);L(16,0,300,2);L(15,4,300,2);L(16,4,300,2);L(12,13,1000,2);
+Ipv4GlobalRoutingHelper::PopulateRoutingTables();auto ip=[&](int i)->Ipv4Address{return n.Get(i)->GetObject<Ipv4>()->GetAddress(1,0).GetLocal();};
+struct Sat{Ptr<SatRouter>r;Ptr<GnbApp>g;};std::vector<Sat>sats(12);
+for(int i=0;i<12;i++){sats[i].r=CreateObject<SatRouter>();sats[i].g=CreateObject<GnbApp>();n.Get(i)->AddApplication(sats[i].r);sats[i].r->SetStartTime(Seconds(0));n.Get(i)->AddApplication(sats[i].g);sats[i].g->SetStartTime(Seconds(0.05));}
+struct OE{double t;std::string d;std::vector<std::vector<int>>e;};std::vector<OE>oe;
+  oe.push_back({0,"INITIAL",{{1,2,200},{2,3,200},{3,4,200},{4,1,200},{5,6,200},{6,7,200},{7,8,200},{8,5,200},{9,10,200},{10,11,200},{11,12,200},{12,9,200},{15,8,350},{13,1,350}}});
+  oe.push_back({25,"NEW: 2,5,180 4,7,180",{{1,2,200},{2,3,200},{3,4,200},{4,1,200},{5,6,200},{6,7,200},{7,8,200},{8,5,200},{9,10,200},{10,11,200},{11,12,200},{12,9,200},{2,5,180},{4,7,180},{15,8,350}}});
+  oe.push_back({70,"NEW: 13,2,350",{{1,2,200},{2,3,200},{3,4,200},{4,1,200},{5,6,200},{6,7,200},{7,8,200},{8,5,200},{9,10,200},{10,11,200},{11,12,200},{12,9,200},{2,5,180},{4,7,180},{13,2,350},{15,8,350}}});
+auto at=[&](const OE&ev){for(int i=0;i<12;i++)sats[i].r->ClearTopo();
+for(auto&e:ev.e){int a=e[0]-1,b=e[1]-1,bw=e[2];
+if(a<12&&b<12){sats[a].r->AddNeighbor(satNames[b],ip(b),bw);sats[b].r->AddNeighbor(satNames[a],ip(a),bw);}
+if(a>=12&&b<12){auto gs=Names::FindName(n.Get(a));sats[b].r->AddDirectGs(gs,bw);sats[b].r->SetRoute(gs,"");}
+if(b>=12&&a<12){auto gs=Names::FindName(n.Get(b));sats[a].r->AddDirectGs(gs,bw);sats[a].r->SetRoute(gs,"");}}
+Ipv4GlobalRoutingHelper::RecomputeRoutingTables();for(int i=0;i<12;i++)sats[i].r->UpdateBest();};at(oe[0]);
+for(int i=0;i<12;i++){sats[i].g->AddCoverage(ip(15));sats[i].g->AddCoverage(ip(16));}
+Ptr<UsrApp>u1=CreateObject<UsrApp>();n.Get(15)->AddApplication(u1);u1->SetStartTime(Seconds(0.05));
+Ptr<UsrApp>u2=CreateObject<UsrApp>();n.Get(16)->AddApplication(u2);u2->SetStartTime(Seconds(0.05));
+Ipv4Address gsIp=ip(12);std::vector<Ptr<PacketSink>>sinks;
+for(int i=0;i<2;i++){PacketSinkHelper sk("ns3::UdpSocketFactory",InetSocketAddress(Ipv4Address::GetAny(),5001+i));auto a=sk.Install(n.Get(12));a.Start(Seconds(0.3));a.Stop(Seconds(100));sinks.push_back(DynamicCast<PacketSink>(a.Get(0)));OnOffHelper oo("ns3::UdpSocketFactory",InetSocketAddress(gsIp,5001+i));oo.SetAttribute("DataRate",DataRateValue(DataRate("100Mbps")));oo.SetAttribute("PacketSize",UintegerValue(1472));oo.SetConstantRate(DataRate("100Mbps"));auto c=oo.Install(n.Get(15+i));c.Start(Seconds(0.5));c.Stop(Seconds(100));}
+for(size_t i=1;i<oe.size();i++){auto ev=oe[i];Simulator::Schedule(Seconds(ev.t),[=](){NS_LOG_UNCOND("\n═══ t="<<(int)ev.t<<"s "<<ev.d<<" ═══");at(ev);for(int j=0;j<12;j++)sats[j].g->Push();});}
+Simulator::Schedule(Seconds(98),[&](){NS_LOG_UNCOND("\n═══ Exp 3 Report ═══");for(int i=0;i<2;i++){double mb=sinks[i]->GetTotalRx()/1e6;NS_LOG_UNCOND("  U"<<(i+1)<<": data="<<mb<<"MB");}NS_LOG_UNCOND("  B2:");for(int i=0;i<12;i++)if(sats[i].r->GetBestE2e()>0)NS_LOG_UNCOND("    "<<satNames[i]<<"="<<sats[i].r->GetBestE2e()<<"M");});
+NS_LOG_UNCOND("\n═══ Exp 3: 12-Sat Walker ISL ═══\n");Simulator::Stop(Seconds(100));Simulator::Run();Simulator::Destroy();return 0;}

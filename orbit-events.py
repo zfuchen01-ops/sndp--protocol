@@ -20,11 +20,12 @@ ISL_MAX_DISTANCE_KM = 3500
 INTRA_PLANE_ISL = True
 INTER_PLANE_ISL = True
 
-# Ground stations (3 for more feeder link events)
+# Ground stations — GS node indices must be ABOVE satellite range (0-11)
+# C++ mapping: GS-E=12, GS-W=13, GS-S=14 (0-indexed, 1-indexed in output = 13-15)
 GS_POSITIONS = [
-    ("GS-E", 116.4, 39.9),    # Beijing
-    ("GS-W", -77.0, 38.9),    # Washington DC
-    ("GS-S", 18.4, -33.9),    # Cape Town
+    ("GS-E", 116.4, 39.9, 12),     # Beijing → node 13 in 1-indexed output
+    ("GS-W", -77.0, 38.9, 13),     # Washington DC → node 14 in 1-indexed output
+    ("GS-S", 18.4, -33.9, 14),     # Cape Town → node 15 in 1-indexed output
 ]
 GS_MIN_ELEVATION_DEG = 10
 
@@ -128,8 +129,7 @@ def generate_events():
 
         # Feeder links (GS ↔ nearest visible satellite)
         gs_edges = {}
-        for gs_idx, (gs_name, gs_lon, gs_lat) in enumerate(GS_POSITIONS):
-            gs_node = 7 + gs_idx  # node indices 7,8
+        for gs_name, gs_lon, gs_lat, gs_node in GS_POSITIONS:
             best_sat = None
             best_elev = 0
             for sat_idx in range(NUM_SATS):
@@ -138,7 +138,7 @@ def generate_events():
                     best_sat = sat_idx
                     best_elev = elev
             if best_sat is not None:
-                gs_edges[(gs_node, best_sat)] = {'bw': 350, 'type': 'feeder', 'elev_deg': round(best_elev, 1)}
+                gs_edges[(gs_node+1, best_sat)] = {'bw': 350, 'type': 'feeder', 'elev_deg': round(best_elev, 1)}
 
         # Build topology string for comparison
         current = []
