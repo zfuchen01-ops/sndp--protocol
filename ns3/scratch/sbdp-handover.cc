@@ -80,6 +80,7 @@ void SatRouter::InstallMonitor(std::string nbName, Ptr<NetDevice> dev) {
   auto& m = m_nbMon[nbName];
   m.queue = DynamicCast<DropTailQueue<Packet>>(p2p->GetQueue());
   m.lastBytes = m.queue ? m.queue->GetTotalReceivedBytes() : 0;
+  NS_LOG_UNCOND("  [MON-INIT " << Names::FindName(GetNode()) << "->" << nbName << " Q=" << (m.queue?"OK":"NULL"));
 }
 
 void SatRouter::StartApplication() {
@@ -297,12 +298,15 @@ void SatRouter::CheckPortChange() {
   double dt = (m_lastMonTime > 0) ? (now - m_lastMonTime) : 0.2;
   if (dt < 0.01) dt = 0.2; m_lastMonTime = now;
   for (auto &kv : m_nbMon) {
+    if(now < 3.0 && !kv.second.queue) NS_LOG_UNCOND("  [DBG "<<my<<"→"<<kv.first<<" NULL Q]");
+    if(now < 3.0 && kv.second.queue) { uint64_t c=kv.second.queue->GetTotalReceivedBytes(); NS_LOG_UNCOND("  [DBG "<<my<<"→"<<kv.first<<" q="<<c<<" last="<<kv.second.lastBytes<<" cap="<<(m_nb.count(kv.first)?(int)m_nb[kv.first].bw:0)<<"M]"); }
     if (!kv.second.queue) continue;
     uint64_t cur = kv.second.queue->GetTotalReceivedBytes();
     uint64_t delta = cur - kv.second.lastBytes;
     double tputMbps = (delta * 8.0 / 1e6) / dt;
-    double cap = m_nb.count(kv.first) ? m_nb[kv.first].bw : 1e9;
+    double cap = m_gsDirect.count(kv.first) ? m_gsDirect[kv.first] : (m_nb.count(kv.first) ? m_nb[kv.first].bw : 1e9);
     kv.second.availBw = cap - tputMbps;
+    if(now < 3.0) NS_LOG_UNCOND("  [MON-LOOP " << my << "->" << kv.first << " delta=" << delta << " tput=" << tputMbps << " cap=" << cap << " avail=" << kv.second.availBw);
     if (kv.second.availBw < 0) kv.second.availBw = 0;
     kv.second.lastBytes = cur;
   }
