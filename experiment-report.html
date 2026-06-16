@@ -201,6 +201,41 @@ A4          已从A1学到GS-E=200      (不推A3,A1)
   每200ms: avail = 链路容量 − (队列GetTotalReceivedBytes() delta / dt)
   真实端口监测, 非手动设值</code></pre>
 
+<h2>验证环境与方式</h2>
+
+<div class="flex">
+  <div class="card"><strong>仿真平台</strong><br>NS-3.42<br>PointToPoint 链路<br>DropTailQueue 队列<br>Ipv4GlobalRouting 路由</div>
+  <div class="card"><strong>真实流量</strong><br>UDP OnOff 应用<br>100-200Mbps 恒定速率<br>PacketSink 收端统计<br>PCAP 抓包验证</div>
+  <div class="card"><strong>端口监测</strong><br>DropTailQueue<br>GetTotalReceivedBytes()<br>每200ms采样<br>容量−流量=可用</div>
+  <div class="card"><strong>Python联动</strong><br>Walker 轨道模型<br>Kepler运动方程<br>ISL可见性判定<br>JSON事件→C++嵌入</div>
+</div>
+
+<div class="card">
+<strong>NS-3 实验架构：</strong>
+<pre><code>┌──────────────────────────────────────────────────┐
+│                 NS-3 仿真进程                     │
+│                                                   │
+│  ┌─────────┐   P2P链路    ┌─────────┐            │
+│  │  User   │◄───────────▶│   SAT   │            │
+│  │(UsrApp) │  ADV(8888)  │(SatRouter+GnbApp)    │
+│  │         │             │         │             │
+│  │ OnOff   │─────────────▶  P2P设备 │            │
+│  │ 100Mbps │  数据流      │   ↓     │            │
+│  └─────────┘             │ Queue    │            │
+│                          │   ↓     │            │
+│                          │ B2 PUSH  │──────────▶ │
+│                          │ (9997)   │  邻居SAT   │
+│                          └─────────┘            │
+│                                                   │
+│  验证链路:                                         │
+│  1. P2P链路本身就是ISL/馈电链路的物理模拟           │
+│  2. SetDataRate() 动态改变链路带宽                 │
+│  3. Queue::GetTotalReceivedBytes() 数真实字节      │
+│  4. PacketSink::GetTotalRx() 端到端统计            │
+│  5. PCAP 抓包, tcpdump -X 查看B2报文原始字节       │
+└──────────────────────────────────────────────────┘</code></pre>
+</div>
+
 <h2>三实验验证矩阵</h2>
 
 <table>
