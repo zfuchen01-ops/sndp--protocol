@@ -470,22 +470,11 @@ Names::Add("U1",n.Get(15));Names::Add("U2",n.Get(16));
 InternetStackHelper inet;inet.Install(n);
 PointToPointHelper p2p;p2p.SetQueue("ns3::DropTailQueue");Ipv4AddressHelper ipv4;uint32_t sn=0;
 auto L=[&](int a,int b,double bw,double d=5){p2p.SetDeviceAttribute("DataRate",StringValue(std::to_string((int)bw)+"Mbps"));p2p.SetChannelAttribute("Delay",StringValue(std::to_string(d)+"ms"));auto dev=p2p.Install(n.Get(a),n.Get(b));char base[32];snprintf(base,32,"10.%u.0.0",sn++);ipv4.SetBase(base,"255.255.255.0");ipv4.Assign(dev);return dev;};
-  L(0,1,200);
-  L(0,3,200);
-  L(1,2,200);
-  L(1,4,180);
-  L(0,12,350);L(1,12,350);
-  L(2,3,200);
-  L(3,6,180);
-  L(4,5,200);
-  L(4,7,200);
-  L(5,6,200);
-  L(6,7,200);
-  L(7,14,350);
-  L(8,9,200);
-  L(8,11,200);
-  L(9,10,200);
-  L(10,11,200);
+  std::map<std::pair<int,int>,NetDeviceContainer>linkDevs;
+  auto LK=[&](int a,int b,double bw,double d=5){auto dev=L(a,b,bw,d);linkDevs[{a,b}]=dev;return dev;};
+  LK(0,1,200);LK(0,3,200);LK(1,2,200);LK(1,4,180);LK(0,12,350);LK(1,12,350);
+  LK(2,3,200);LK(3,6,180);LK(4,5,200);LK(4,7,200);LK(5,6,200);
+  LK(6,7,200);LK(7,14,350);LK(8,9,200);LK(8,11,200);LK(9,10,200);LK(10,11,200);
   L(15,0,300,2);L(16,0,300,2);L(15,4,300,2);L(16,4,300,2);L(12,13,1000,2);
 Ipv4GlobalRoutingHelper::PopulateRoutingTables();auto ip=[&](int i)->Ipv4Address{return n.Get(i)->GetObject<Ipv4>()->GetAddress(1,0).GetLocal();};
 struct Sat{Ptr<SatRouter>r;Ptr<GnbApp>g;};std::vector<Sat>sats(12);
@@ -500,6 +489,7 @@ if(a<12&&b<12){sats[a].r->AddNeighbor(satNames[b],ip(b),bw);sats[b].r->AddNeighb
 if(a>=12&&b<12){auto gs=Names::FindName(n.Get(a));sats[b].r->AddDirectGs(gs,bw);sats[b].r->SetRoute(gs,"");}
 if(b>=12&&a<12){auto gs=Names::FindName(n.Get(b));sats[a].r->AddDirectGs(gs,bw);sats[a].r->SetRoute(gs,"");}}
 Ipv4GlobalRoutingHelper::RecomputeRoutingTables();for(int i=0;i<12;i++)sats[i].r->UpdateBest();};at(oe[0]);
+  for(auto&kv:linkDevs){int a=kv.first.first,b=kv.first.second;if(a<12&&b<12)sats[a].r->InstallMonitor(satNames[b],kv.second.Get(a<b?0:1));if(b<12&&a<12)sats[b].r->InstallMonitor(satNames[a],kv.second.Get(a<b?1:0));if(a==12&&b<12)sats[b].r->InstallMonitor("GS-E",kv.second.Get(1));if(b==12&&a<12)sats[a].r->InstallMonitor("GS-E",kv.second.Get(0));if(a==13&&b<12)sats[b].r->InstallMonitor("GS-W",kv.second.Get(1));if(b==13&&a<12)sats[a].r->InstallMonitor("GS-W",kv.second.Get(0));if(a==14&&b<12)sats[b].r->InstallMonitor("GS-S",kv.second.Get(1));if(b==14&&a<12)sats[a].r->InstallMonitor("GS-S",kv.second.Get(0));}
 for(int i=0;i<12;i++){sats[i].g->AddCoverage(ip(15));sats[i].g->AddCoverage(ip(16));}
 Ptr<UsrApp>u1=CreateObject<UsrApp>();n.Get(15)->AddApplication(u1);u1->SetStartTime(Seconds(0.05));
 Ptr<UsrApp>u2=CreateObject<UsrApp>();n.Get(16)->AddApplication(u2);u2->SetStartTime(Seconds(0.05));
