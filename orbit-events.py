@@ -5,33 +5,32 @@ Simplified: satellites move on circular orbits, ISL established if distance < th
 """
 import json, math, sys
 
-# Walker Delta constellation: 6 satellites, 2 planes × 3 sats/plane
-# Plane A: 3 satellites, plane B: 3 satellites
-# Altitude: 550km, inclination: 53°
-NUM_SATS = 6
-PLANES = 2
-SATS_PER_PLANE = 3
+# Walker Delta: 12 satellites, 3 planes × 4 sats/plane, 550km, 53° incl
+NUM_SATS = 12
+PLANES = 3
+SATS_PER_PLANE = 4
 ALTITUDE_KM = 550
 EARTH_RADIUS_KM = 6371
 INCLINATION_DEG = 53
-ORBIT_PERIOD_S = 5730  # ~95 min at 550km
-PHASE_FACTOR = 1  # Walker Delta phase offset between planes
+ORBIT_PERIOD_S = 3600  # compressed for more events in 100s window
+PHASE_FACTOR = 1
 
-# ISL parameters
-ISL_MAX_DISTANCE_KM = 5000  # max laser link range
-INTRA_PLANE_ISL = True      # same-plane neighbors always connected
-INTER_PLANE_ISL = True      # cross-plane: only if distance < threshold
+# ISL: tighter threshold = more topology changes
+ISL_MAX_DISTANCE_KM = 3500
+INTRA_PLANE_ISL = True
+INTER_PLANE_ISL = True
 
-# Ground stations
+# Ground stations (3 for more feeder link events)
 GS_POSITIONS = [
-    ("GS-E", 116.4, 39.9),   # Beijing
-    ("GS-W", -77.0, 38.9),   # Washington DC
+    ("GS-E", 116.4, 39.9),    # Beijing
+    ("GS-W", -77.0, 38.9),    # Washington DC
+    ("GS-S", 18.4, -33.9),    # Cape Town
 ]
-GS_MIN_ELEVATION_DEG = 10    # minimum elevation for feeder link
+GS_MIN_ELEVATION_DEG = 10
 
-# Simulation parameters
-SIM_DURATION_S = 900         # 15 min
-TIME_STEP_S = 10             # check every 10s
+# Simulation: 100s for NS-3 compatibility
+SIM_DURATION_S = 100
+TIME_STEP_S = 5  # finer granularity
 
 def satellite_positions(t_seconds):
     """Compute satellite positions (lat, lon, alt_km) at time t."""
