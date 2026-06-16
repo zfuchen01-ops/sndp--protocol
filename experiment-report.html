@@ -5,30 +5,30 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SBDP — 卫星回传容量发现协议</title>
 <style>
-:root{--bg:#0d1117;--card:#161b22;--accent:#21262d;--text:#c9d1d9;--muted:#8b949e;--hl:#58a6ff;--green:#3fb950;--orange:#d2991d;--red:#f85149;--code-bg:#0d1117;}
+:root{--bg:linear-gradient(135deg,#0f0c29,#302b63,#24243e);--card:rgba(255,255,255,.06);--accent:rgba(255,255,255,.1);--text:#e8e8f0;--muted:#a0a0c0;--hl:#7cacff;--green:#4ce08b;--orange:#ffb347;--red:#ff6b6b;--pink:#ff79c6;--cyan:#5ce1e6;--code-bg:rgba(0,0,0,.3);}
 *{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);line-height:1.7;}
+body{font-family:-apple-system,'Segoe UI',sans-serif;background:linear-gradient(135deg,#0f0c29 0%,#302b63 50%,#24243e 100%);color:var(--text);line-height:1.7;min-height:100vh;}
 .container{max-width:1000px;margin:0 auto;padding:2rem 1.5rem;}
-h1{font-size:2rem;text-align:center;padding:2rem 0 1rem;color:#fff;border-bottom:2px solid var(--accent);margin-bottom:2rem;}
-h2{font-size:1.25rem;color:var(--hl);margin:2rem 0 1rem;padding-left:.5rem;border-left:3px solid var(--hl);}
+h1{font-size:2.2rem;text-align:center;padding:2.5rem 0 1.5rem;background:linear-gradient(90deg,var(--hl),var(--pink),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;border-bottom:2px solid var(--accent);margin-bottom:2rem;font-weight:900;}
+h2{font-size:1.25rem;color:var(--hl);margin:2rem 0 1rem;padding:.5rem .8rem;border-radius:8px;background:rgba(124,172,255,.08);border-left:3px solid var(--hl);}
 h3{font-size:1rem;color:var(--orange);margin:1.2rem 0 .6rem;}
-table{width:100%;border-collapse:collapse;margin:.8rem 0;font-size:.85rem;}
-th{background:var(--accent);color:#fff;padding:.4rem .7rem;text-align:left;}
-td{padding:.35rem .7rem;border-bottom:1px solid #30363d;}
-tr:hover td{background:rgba(255,255,255,.02);}
+table{width:100%;border-collapse:collapse;margin:.8rem 0;font-size:.85rem;border-radius:12px;overflow:hidden;}
+th{background:linear-gradient(135deg,rgba(124,172,255,.2),rgba(255,121,198,.15));color:#fff;padding:.5rem .8rem;text-align:left;}
+td{padding:.4rem .8rem;border-bottom:1px solid rgba(255,255,255,.06);}
+tr:hover td{background:rgba(255,255,255,.04);}
 pre,code{font-family:'SF Mono',Consolas,monospace;font-size:.78rem;}
-pre{background:var(--code-bg);padding:.8rem;border-radius:6px;overflow-x:auto;border:1px solid #30363d;margin:.6rem 0;line-height:1.4;}
-code{color:var(--green);}pre code{color:var(--text);}
-.card{background:var(--card);border-radius:8px;padding:1rem;margin:.8rem 0;border:1px solid #30363d;}
-.tag{display:inline-block;padding:.1rem .5rem;border-radius:3px;font-size:.7rem;font-weight:600;}
+pre{background:var(--code-bg);padding:1rem;border-radius:10px;overflow-x:auto;border:1px solid rgba(255,255,255,.1);margin:.6rem 0;line-height:1.5;}
+code{color:var(--green);}pre code{color:#d0d0e0;}
+.card{background:var(--card);border-radius:12px;padding:1.2rem;margin:.8rem 0;border:1px solid rgba(255,255,255,.08);backdrop-filter:blur(10px);}
+.tag{display:inline-block;padding:.15rem .6rem;border-radius:20px;font-size:.7rem;font-weight:600;}
 .t-blue{background:var(--hl);color:#000;}.t-orange{background:var(--orange);color:#000;}.t-green{background:var(--green);color:#000;}.t-red{background:var(--red);color:#fff;}
 .flex{display:flex;gap:.8rem;flex-wrap:wrap;}
 .flex>*{flex:1;min-width:180px;}
-.stat{font-size:1.4rem;font-weight:700;color:var(--green);}
-.diagram{background:#0a0a14;padding:1rem;border-radius:6px;overflow-x:auto;font-family:monospace;font-size:.72rem;line-height:1.3;white-space:pre;color:#b0d0ff;border:1px solid #30363d;}
+.stat{font-size:1.6rem;font-weight:800;background:linear-gradient(90deg,var(--green),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.diagram{background:rgba(0,0,0,.3);padding:1.2rem;border-radius:10px;overflow-x:auto;font-family:monospace;font-size:.72rem;line-height:1.5;white-space:pre;color:#b0d0ff;border:1px solid rgba(255,255,255,.08);}
 .pass{color:var(--green);font-weight:700;}.fail{color:var(--red);font-weight:700;}
-hr{border:none;border-top:1px solid #30363d;margin:1.5rem 0;}
-.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.7rem;margin-right:4px;}.badge-ok{background:#1a3a1a;color:var(--green);}.badge-wip{background:#3a2a1a;color:var(--orange);}
+hr{border:none;border-top:1px solid rgba(255,255,255,.06);margin:1.5rem 0;}
+.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.7rem;margin-right:4px;}.badge-ok{background:rgba(76,224,139,.15);color:var(--green);}.badge-wip{background:rgba(255,179,71,.15);color:var(--orange);}
 </style>
 </head>
 <body>
@@ -84,11 +84,13 @@ Type: 0=PUSH(端口变化) 1=REQUEST(初始拉) 2=REPLY(回复请求)</code></pr
 
 <div class="diagram">User-1 ──150M── SAT-A ──600M── SAT-B ──350M── Server</div>
 
+<div class="card">
+<strong>B2 瓶颈 vs 实际吞吐量对照：</strong>
 <table>
-<tr><td>B2 瓶颈</td><td class="stat">150 Mbps</td><td>min(150,600,350)</td></tr>
-<tr><td>UDP 实际</td><td>139 Mbps</td><td>~7% 开销 (IP+UDP+队列)</td></tr>
-<tr><td>SBDP VERDICT</td><td class="pass">✓ PASS</td><td></td></tr>
+<tr><th>指标</th><th>B2 报</th><th>实际</th><th>差</th></tr>
+<tr><td>链路瓶颈</td><td class="stat">150M</td><td class="stat">139M</td><td>~7% (包头+队列)</td></tr>
 </table>
+</div>
 
 <h2>Exp 2 — 多星覆盖接入切换</h2>
 
@@ -108,7 +110,14 @@ U3 ── SAT-C    400M</div>
 </table>
 
 <div class="card">
-<strong>结果：</strong>每用户 ~952MB 数据到达 (100s)。<strong>SAT-B=282M</strong> 来自真队列监测 (600M容量−300M流量=300M≈282M)。非静态设值。
+<strong>B2 瓶颈 vs 实际吞吐量对照：</strong>
+<table>
+<tr><th>卫星</th><th>链路</th><th>容量</th><th>流量</th><th>B2 报</th><th>理论可用</th><th>差</th></tr>
+<tr><td>SAT-B</td><td>→GS-Main</td><td>600M</td><td>3×100M</td><td class="stat">282M</td><td>300M</td><td>~6%</td></tr>
+<tr><td>SAT-A</td><td>→GS-Alt via SAT-C</td><td>120M(雨衰)</td><td>0</td><td class="stat">120M</td><td>120M</td><td>0%</td></tr>
+<tr><td>SAT-A</td><td>→GS-Main via SAT-B</td><td>180M(ISL)</td><td>100M</td><td class="stat">74M</td><td>80M</td><td>~8%</td></tr>
+</table>
+<strong>数据：</strong>每用户 ~952MB 到达 (100s×100Mbps)。<strong>SAT-B=282M 来自队列实测</strong>，非手设。
 </div>
 
 <h2>Exp 3 — 12星 Walker ISL 动态</h2>
@@ -126,8 +135,13 @@ Events: t=25s 跨面ISL新增, t=70s GS-W上线</div>
 </table>
 
 <div class="card">
-<strong>Python→NS-3 联动管道：</strong>
-<pre><code>orbit-events.py (Walker 轨道+ISL可见性) → orbit-events.json → C++ 嵌入 → B2实验</code></pre>
+<strong>B2 瓶颈 vs 实际吞吐量对照：</strong>
+<table>
+<tr><th>链路</th><th>容量</th><th>数据流</th><th>B2 报（可用）</th><th>理论可用</th><th>差</th></tr>
+<tr><td>A1→GS-E 馈电链路</td><td>350M</td><td>2×97.5M ≈ 195M</td><td class="stat">138M</td><td>155M</td><td>~11%</td></tr>
+<tr><td>A2→GS-E（t=70后）</td><td>350M</td><td>部分经A1</td><td class="stat">350M</td><td>-</td><td>新增链路，空载</td></tr>
+</table>
+<strong>数据：</strong>U1=1218MB, U2=1218MB (100s)。100s 仅<strong>31 条</strong>B2 消息 (Split Horizon)。
 </div>
 
 <h2>协议优化</h2>
