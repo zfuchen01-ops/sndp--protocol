@@ -64,20 +64,94 @@ Type: 0=PUSH(端口变化) 1=REQUEST(初始拉) 2=REPLY(回复请求)</code></pr
 
 <h2>协议设计</h2>
 
+<h3>报文格式 — 标准协议骨架</h3>
+<pre><code>  0                   1                   2                   3
+  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+ ┌───────────────┬───────────────┬───────────────┬───────────────┐
+ │    Magic      │    Magic      │   Version     │     Type      │
+ │    0x42       │    0x32       │      1        │  0/1/2        │
+ │   (定界)      │   (定界)      │   (标识)      │   (标识)      │
+ ├───────────────┴───────────────┼───────────────┼───────────────┤
+ │         Total Length          │         Sequence Number       │
+ │         (长度, uint16)         │         (去重, uint16)         │
+ ├───────────────┬───────────────┴───────────────┴───────────────┤
+ │   Name Len    │            Sender Name (variable)             │
+ │   (uint8)     │                                               │
+ ├───────────────┼───────────────────────────────────────────────┤
+ │   N (uint8)   │  GS Entries: [GS Name Len(1B)|GS Name|Bw(4B)] │
+ │  (条目数)      │  ... 重复 N 次 ...                            │
+ └───────────────┴───────────────────────────────────────────────┘
+
+  Type: 0 = PUSH  (端口变化, 主动推送)
+        1 = REQUEST (初始启动, 请求邻居状态)
+        2 = REPLY   (收到REQUEST后回复)
+
+  Bw字段: 剩余带宽 (Mbps) = 链路容量 − 队列实测流量</code></pre>
+
 <div class="flex">
-  <div class="card"><strong>定界</strong><br>Magic 0x42 0x32 ("B2")<br>非B2包直接丢弃</div>
-  <div class="card"><strong>标识</strong><br>Version=1<br>Type: 0=PUSH 1=REQUEST 2=REPLY</div>
-  <div class="card"><strong>长度</strong><br>TotalLength(uint16)<br>显式自描述，不安全推导</div>
-  <div class="card"><strong>去重</strong><br>Sequence Number(uint16)<br>区分新旧消息</div>
+  <div class="card"><strong>定界</strong><br>Magic 0x42 0x32<br>非B2包 → 直接丢弃</div>
+  <div class="card"><strong>标识</strong><br>Version + Type<br>版本升级向前兼容</div>
+  <div class="card"><strong>长度</strong><br>TotalLength uint16<br>自描述, 不依赖推导</div>
+  <div class="card"><strong>去重</strong><br>Sequence Number<br>区分新旧, 防重复处理</div>
 </div>
 
-<div class="card">
-<strong>协议骨架——对标 OSPF/BGP/RIP：</strong>标准协议的四个定界问题，B2 全部回答。<br>
-<strong>语法（Wire Format）：</strong>每字节位置固定，对方闭着眼知道怎么解析。<br>
-<strong>语义（Message Semantics）：</strong>PUSH=我变了主动告诉你，REQUEST=我刚上线问你要，REPLY=你问我才回的。<br>
-<strong>时序（State Machine）：</strong>启动→REQUEST，端口变→PUSH，收到REQUEST→REPLY，稳定期→沉默。<br>
-<strong>处理规则：</strong>min(链路带宽−已用, 收到瓶颈)，逐跳累加路径开销。
-</div>
+<h3>状态机 — Pull+Push+Split Horizon</h3>
+<pre><code>        ┌─────── 卫星启动 ───────┐
+        │                        │
+        ▼                        ▼
+   ┌─────────┐            ┌──────────┐
+   │ REQUEST │ ────────▶  │  等待    │
+   │ (拉取)   │  发REQ给   │  REPLY   │
+   └─────────┘  所有邻居   └────┬─────┘
+                               │ 收到REPLY
+                               ▼
+                        ┌──────────┐
+                        │  学习    │
+                        │ GS条目   │──▶ m_gsSource[GS] = 来源邻居
+                        └────┬─────┘
+                             │ RecvEx 触发
+                             ▼
+                        ┌──────────┐
+                        │   PUSH   │──▶ 发给 ALL 邻居
+                        │  (传播)   │    ✗ 除 m_gsSource[GS] 的邻居
+                        └────┬─────┘    (Split Horizon)
+                             │
+                    ┌────────┴────────┐
+                    ▼                 ▼
+              端口变化检测       周期性检查(200ms)
+              (MON)              (CheckPortChange)
+              │                  │
+              ▼                  ▼
+          m_nb 变了?          稳定 → 不发
+          │ YES               变化 → PUSH
+          ▼
+     失效该邻居来源的所有 GS
+     重新计算 best
+     立即 PUSH</code></pre>
+
+<h3>消息交换时序</h3>
+<pre><code>时间 →
+A1(GS-E)    ──REQ──▶ A2,A4          ──PUSH──▶ A2,A4
+A2          ◀──REPLY── A1           ◀──PUSH──  A1  (学到GS-E=350)
+            ──PUSH──▶ A3,B2         (不推A1 ← Split Horizon)
+A3          ◀──PUSH──  A2           (学到GS-E=min(200,350)=200)
+            ──PUSH──▶ A4,B3         (不推A2)
+A4          已从A1学到GS-E=200      (不推A3,A1)
+...</code></pre>
+
+<h3>处理规则 — 逐跳 min 瓶颈</h3>
+<pre><code>收到 PUSH/REPLY (来自邻居 N, 含GS条目 G):
+  if N ≠ 本卫星到G的路由下一跳 → 忽略 (路由对齐)
+  if G 是直连GS → 忽略 (本地权威)
+  newBw = min( 本卫星→N的可用带宽 , N通告的瓶颈 )
+  if newBw > m_gs[G]:
+    m_gs[G] = newBw
+    m_gsSource[G] = N    ← 记录来源 (Split Horizon用)
+    触发 PUSH 给其他邻居
+
+可用带宽:
+  每200ms: avail = 链路容量 − (队列GetTotalReceivedBytes() delta / dt)
+  真实端口监测, 非手动设值</code></pre>
 
 <h2>三实验验证矩阵</h2>
 
