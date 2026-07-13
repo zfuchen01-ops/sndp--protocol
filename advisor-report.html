@@ -38,11 +38,21 @@ hr{border:none;border-top:1px solid var(--border);margin:1.5rem 0}
 <body>
 <div class="container">
 
-<h1>B2 协议验证报告<br><span style="font-size:1rem;font-weight:400;color:var(--muted)">卫星网络回传瓶颈的在网感知与接入协同</span></h1>
+<h1>B2：卫星回传瓶颈发现协议<br><span style="font-size:1rem;font-weight:400;color:var(--muted)">端口监测 → 距离矢量传播 → 终端感知 — NS-3 协议实现与验证</span></h1>
 
-<!-- ═══════════ 核心主张 ═══════════ -->
+<!-- ═══════════ 协议概述 ═══════════ -->
+<h2>协议做什么</h2>
+
 <div class="card" style="background:var(--blue-bg);border:2px solid var(--hl)">
-<strong>核心创新：</strong>B2 协议通过 <strong>端口实时监测 + 距离矢量传播 + Split Horizon 优化</strong>，使终端在接入切换时感知回传链路的剩余容量，避免"全涌向同一颗星"。
+<strong>B2 协议解决什么问题：</strong>卫星网络中，用户选择接入卫星时只看空口信号强度，不知道这颗星的回传链路（星间+馈电）还剩多少容量。大量用户"不约而同"涌向同一颗信号好的星，瞬间拥塞。<br><br>
+<strong>B2 怎么做：</strong>每颗卫星<strong>实时监测自己的 ISL/馈电端口流量</strong>（队列字节计数器），算出剩余可用带宽，通过 <strong>PUSH/REQUEST/REPLY 三种轻量消息</strong>在卫星间逐跳传播瓶颈值，最后通过 <strong>ADV 广播给覆盖区内所有终端</strong>。终端据此做出"回传容量可感知"的接入选择。<br><br>
+<strong>三句话概括：</strong>端口监测 → 距离矢量传播 → 终端感知。
+</div>
+
+<div class="flex3">
+  <div><div class="lab">消息类型</div><div class="val">3 种</div><div class="lab">PUSH·REQUEST·REPLY</div></div>
+  <div><div class="lab">开销</div><div class="val">~30B/条</div><div class="lab">稳定期零流量</div></div>
+  <div><div class="lab">收敛</div><div class="val">≤200ms</div><div class="lab">跳数×检查周期</div></div>
 </div>
 
 <!-- ═══════════ 关键实验 ═══════════ -->
