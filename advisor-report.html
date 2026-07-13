@@ -78,7 +78,8 @@ hr{border:none;border-top:1px solid var(--border);margin:1.5rem 0}
 </div>
 
 <div class="card">
-<strong>验证结论：</strong>B2 端口监测检测到流量从 200Mbps 降到 100Mbps，可用带宽从 138M 回升到 244M。留守用户 U2 通过 ADV 收到更新值。**回传容量在用户接入切换下被实时感知并量化。**
+<strong>验证结论：</strong>B2 端口监测检测到流量从 200Mbps 降到 100Mbps，可用带宽从 138M 回升到 244M。留守用户 U2 通过 ADV 收到更新值。<br>
+<strong>PCAP 交叉验证：</strong>B2 队列监测 5.29MB/周期 → 总 1.32GB；PCAP 抓包 1,928,587 包 ≈ 1.33GB。<strong>差 < 1%。</strong>
 </div>
 
 <!-- ═══════════ 协议原理 ═══════════ -->
@@ -151,7 +152,7 @@ Python orbit-events.py (轨道力学) → JSON → C++ 嵌入 → B2 验证
 
 <div class="flex3">
   <div><div class="lab">轨道联动</div><div class="val">Python→C++</div><div class="lab">Walker·Kepler·ISL可视图</div></div>
-  <div><div class="lab">PCAP 抓包</div><div class="val">tcpdump -X</div><div class="lab">B2 原始字节可验证</div></div>
+  <div><div class="lab">PCAP 抓包</div><div class="val">1.93M 包</div><div class="lab">B2监测值 vs PCAP差<1%</div></div>
   <div><div class="lab">协议对标</div><div class="val">OSPF/BGP/RIP</div><div class="lab">标准骨架：定界·标识·长度·去重</div></div>
 </div>
 
