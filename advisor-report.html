@@ -59,27 +59,32 @@ hr{border:none;border-top:1px solid var(--border);margin:1.5rem 0}
 <h2>协议设计</h2>
 
 <h3>报文结构 — 标准协议骨架</h3>
-<pre>  0               1               2               3
-  0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
-┌───────────────┬───────────────┬───────────────┬───────────────┐
-│    Magic      │    Magic      │   Version     │     Type      │
-│    0x42       │    0x32       │      1        │  0/1/2        │
-│   (定界)       │   (定界)       │   (标识)       │   (标识)       │
-├───────────────┴───────────────┼───────────────┼───────────────┤
-│         Total Length          │         Sequence Number       │
-│         (长度, uint16)         │         (去重, uint16)         │
-├───────────────┬───────────────┴───────────────┴───────────────┤
-│   Name Len    │            Sender Name (variable)             │
-│   (uint8)     │                                                │
-├───────────────┼────────────────────────────────────────────────┤
-│   N (uint8)   │  GS Entries: [GS Name Len(1B)|GS Name|Bw(4B)] │
-│  (条目数)       │  ... 重复 N 次 ...                             │
-└───────────────┴────────────────────────────────────────────────┘</pre>
+<pre> 字节  0    1    2    3    4    5    6    7    8    9   10   11   12   13   14   15
+     ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
+  0  │     Magic=0x4232       │ Ver=1 │ Type  │       Total Length (uint16)        │
+     │        (定界)           │ (标识) │ (标识) │         (自描述长度)                │
+     ├────┴────┴────┴────┴────┼────┴────┼────┴────┴────┴────┴────┴────┴────┴────┴────┤
+  8  │   Sequence (uint16)    │NameLen  │         Sender Name (NameLen bytes)        │
+     │      (去重/排序)        │ (uint8)  │                                            │
+     ├────────────────────────┴─────────┴────────────────────────────────────────────┤
+  ?  │ N (uint8) │ GS NameLen(1B) │   GS Name (GS NameLen bytes)    │  Bw (int32)  │
+     │ (条目数)   │                 │                                │    (Mbps)     │
+     ├───────────┴─────────────────┴────────────────────────────────┴───────────────┤
+  ?  │              ... 重复 N 次 (每个 GS 条目) ...                                  │
+     └───────────────────────────────────────────────────────────────────────────────┘
+
+  最小包: REQUEST = 11B (8B固定头 + 1B NameLen + 2B空名)
+  典型包: PUSH(1 GS) = 27B (8B+1B+5B名+1B+1B+4B名+4B bw)
+  最大包: PUSH(3 GS) = 42B (12星×3GS=36B载荷+8B头+1B名+3B条目头)
+
+  Type: 0 = PUSH  (端口变化 → 主动推送)
+        1 = REQUEST (启动 → 请求邻居状态)
+        2 = REPLY   (收到REQUEST → 返回状态)</pre>
 
 <div class="flex3">
-  <div><div class="lab">定界</div><div class="val">Magic 0x42 0x32</div><div class="lab">非B2包直接丢弃</div></div>
-  <div><div class="lab">标识</div><div class="val">Version + Type</div><div class="lab">版本升级兼容</div></div>
-  <div><div class="lab">长度</div><div class="val">TotalLength u16</div><div class="lab">自描述，不依赖推导</div></div>
+  <div><div class="lab">定界</div><div class="val">Magic 0x4232</div><div class="lab">非B2包 → 直接丢弃</div></div>
+  <div><div class="lab">标识</div><div class="val">Ver=1 + Type</div><div class="lab">版本升级向前兼容</div></div>
+  <div><div class="lab">长度</div><div class="val">TotalLength u16</div><div class="lab">显式自描述，不安全推导</div></div>
 </div>
 
 <h3>消息语义与状态机</h3>
