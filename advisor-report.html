@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B2 协议验证报告 — 卫星回传容量感知</title>
+<style>
+:root{--bg:#f8f9fa;--card:#fff;--text:#1a1a2e;--muted:#6c757d;--hl:#2563eb;--green:#059669;--orange:#d97706;--red:#dc2626;--blue-bg:#eff6ff;--green-bg:#ecfdf5;--orange-bg:#fffbeb;--border:#e5e7eb}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,'Noto Sans SC','PingFang SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.8}
+.container{max-width:900px;margin:0 auto;padding:2rem 1.5rem}
+h1{font-size:1.8rem;text-align:center;padding:2rem 0 1rem;color:var(--hl);border-bottom:3px solid var(--hl);margin-bottom:1.5rem;font-weight:800}
+h2{font-size:1.15rem;color:var(--text);margin:2rem 0 .8rem;padding:.5rem .8rem;background:var(--blue-bg);border-left:3px solid var(--hl);border-radius:4px}
+h3{font-size:1rem;color:#374151;margin:1rem 0 .5rem}
+table{width:100%;border-collapse:collapse;margin:.8rem 0;font-size:.85rem;background:var(--card);border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+th{background:#f1f5f9;color:#374151;padding:.5rem .8rem;text-align:left;font-weight:600;border-bottom:2px solid var(--border)}
+td{padding:.45rem .8rem;border-bottom:1px solid var(--border)}
+pre{background:#1e293b;color:#e2e8f0;padding:1rem;border-radius:8px;overflow-x:auto;font-size:.78rem;line-height:1.5;margin:.8rem 0}
+code{font-family:'SF Mono',Consolas,monospace;font-size:.78rem}
+.card{background:var(--card);padding:1.2rem;border-radius:8px;margin:.8rem 0;border:1px solid var(--border);box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.tag{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:.7rem;font-weight:600}
+.t-blue{background:var(--blue-bg);color:var(--hl)}.t-green{background:var(--green-bg);color:var(--green)}.t-orange{background:var(--orange-bg);color:var(--orange)}
+.big-num{font-size:2rem;font-weight:800;color:var(--hl)}
+.delta-up{color:var(--green);font-weight:700}.delta-down{color:var(--red);font-weight:700}
+.diagram{background:#1e293b;color:#94a3b8;padding:1rem;border-radius:8px;font-family:monospace;font-size:.7rem;line-height:1.4;white-space:pre;margin:.8rem 0}
+.vs{display:flex;gap:1rem;align-items:center;justify-content:center;margin:1rem 0}
+.vs>div{flex:1;text-align:center;padding:1rem;border-radius:8px}
+.vs .before{background:var(--orange-bg);border:1px solid #fcd34d}
+.vs .after{background:var(--green-bg);border:1px solid #86efac}
+.vs .arrow{font-size:2rem;color:var(--hl);flex:0}
+.metric{font-size:1.3rem;font-weight:700}
+hr{border:none;border-top:1px solid var(--border);margin:1.5rem 0}
+.flex3{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:.8rem 0}
+.flex3>div{background:var(--card);padding:1rem;border-radius:8px;border:1px solid var(--border);text-align:center}
+.flex3 .lab{font-size:.75rem;color:var(--muted)}.flex3 .val{font-size:1.2rem;font-weight:700;color:var(--hl)}
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>B2 协议验证报告<br><span style="font-size:1rem;font-weight:400;color:var(--muted)">卫星网络回传瓶颈的在网感知与接入协同</span></h1>
+
+<!-- ═══════════ 核心主张 ═══════════ -->
+<div class="card" style="background:var(--blue-bg);border:2px solid var(--hl)">
+<strong>核心创新：</strong>B2 协议通过 <strong>端口实时监测 + 距离矢量传播 + Split Horizon 优化</strong>，使终端在接入切换时感知回传链路的剩余容量，避免"全涌向同一颗星"。
+</div>
+
+<!-- ═══════════ 关键实验 ═══════════ -->
+<h2>关键实验 — 用户切换下的回传容量感知</h2>
+
+<div class="diagram">场景: U1、U2 均在 SAT-A，经 350M 馈电链路 → 地面站 GS
+     各打 100Mbps UDP 数据流。t=30s U1 切走，U2 留守。
+
+     U1 ──100M──┐
+                 SAT-A ──350M── GS
+     U2 ──100M──┘</div>
+
+<div class="vs">
+  <div class="before">
+    <div style="color:var(--orange);font-weight:700;margin-bottom:.5rem">t=20s · U1 切走前</div>
+    <div class="metric" style="color:var(--orange)">138 Mbps</div>
+    <div style="font-size:.8rem;color:var(--muted)">B2 报可用带宽</div>
+    <div style="font-size:.75rem;margin-top:.3rem">理论: 350−200 ≈ 150M</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="after">
+    <div style="color:var(--green);font-weight:700;margin-bottom:.5rem">t=45s · U1 切走后</div>
+    <div class="metric" style="color:var(--green)">244 Mbps</div>
+    <div style="font-size:.8rem;color:var(--muted)">B2 报可用带宽</div>
+    <div style="font-size:.75rem;margin-top:.3rem">理论: 350−100 ≈ 250M</div>
+  </div>
+</div>
+
+<div class="flex3">
+  <div><div class="lab">U1 数据量</div><div class="val delta-down">369 MB</div><div class="lab">t=30s 已停止</div></div>
+  <div><div class="lab">U2 数据量</div><div class="val">556 MB</div><div class="lab">持续 100Mbps</div></div>
+  <div><div class="lab">B2 回升幅度</div><div class="val delta-up">+106 Mbps</div><div class="lab">138→244 Mbps</div></div>
+</div>
+
+<div class="card">
+<strong>验证结论：</strong>B2 端口监测检测到流量从 200Mbps 降到 100Mbps，可用带宽从 138M 回升到 244M。留守用户 U2 通过 ADV 收到更新值。**回传容量在用户接入切换下被实时感知并量化。**
+</div>
+
+<!-- ═══════════ 协议原理 ═══════════ -->
+<h2>协议原理</h2>
+
+<div class="diagram">B2 报文格式 (标准协议骨架):
+┌──────┬──────┬──────┬──────┬──────────┬──────────┬──────┬──────┬───────────┐
+│Magic │Magic │ Ver  │ Type │Total Len │ Sequence │NameL │ Name │ N×[GS+Bw] │
+│0x42  │0x32  │  1   │0/1/2 │ (uint16) │ (uint16) │(u8)  │(var) │   (var)   │
+└──────┴──────┴──────┴──────┴──────────┴──────────┴──────┴──────┴───────────┘
+Type: 0=PUSH(变即推) 1=REQUEST(启动拉) 2=REPLY(问才回)</div>
+
+<div class="flex3">
+  <div><div class="lab">端口监测</div><div class="val">队列字节</div><div class="lab">GetTotalReceivedBytes()</div></div>
+  <div><div class="lab">瓶颈传播</div><div class="val">距离矢量</div><div class="lab">min(链路, 收到值)</div></div>
+  <div><div class="lab">开销优化</div><div class="val">Split Horizon</div><div class="lab">不推回来源邻居</div></div>
+</div>
+
+<!-- ═══════════ 辅助实验 ═══════════ -->
+<h2>辅助实验一 — 逐跳瓶颈发现与吞吐量对照</h2>
+
+<div class="diagram">User-1 ──150M── SAT-A ──600M── SAT-B ──350M── Server
+     打 200Mbps UDP → 150M 瓶颈自然削到 ~139M</div>
+
+<table>
+<tr><th>SBDP 瓶颈</th><td class="big-num">150 Mbps</td><td>min(150,600,350)</td></tr>
+<tr><th>UDP 实际</th><td>139 Mbps</td><td>~7% (包头开销)</td></tr>
+<tr><th>结论</th><td class="delta-up" colspan="2">✓ 逐跳 min 瓶颈发现正确，与实际吞吐一致</td></tr>
+</table>
+
+<h2>辅助实验二 — 多星多跳 + 真实队列监测</h2>
+
+<div class="diagram">U1→SAT-A──500M──SAT-B──600M──GS-Main
+U2→SAT-B──350M──SAT-C──400M──GS-Alt
+U3→SAT-C           120M(雨衰)
+3×100Mbps UDP, 9事件, 100s</div>
+
+<table>
+<tr><th>卫星</th><th>链路容量</th><th>实测流量</th><th>B2 报</th><th>理论可用</th><th>差</th></tr>
+<tr><td>SAT-B→GS-Main</td><td>600M</td><td>~300M</td><td class="big-num">282M</td><td>300M</td><td>~6%</td></tr>
+<tr><td>SAT-C→GS-Alt</td><td>120M(雨衰)</td><td>0</td><td class="big-num">120M</td><td>120M</td><td>0%</td></tr>
+<tr><td>SAT-A→GS-Main</td><td>180M(ISL)</td><td>100M</td><td class="big-num">74M</td><td>80M</td><td>~8%</td></tr>
+</table>
+
+<div class="card">
+<strong>结论：</strong>9 事件 ISL/馈电链路变化下，B2 持续正确。每用户 952MB 数据到达。SAT-B=282M 来自队列实测，非手设。<br>
+<strong>用户切换：</strong>2 次（SAT-C→SAT-B, SAT-A→SAT-C），瓶颈低于阈值自动触发。
+</div>
+
+<h2>辅助实验三 — 12 星 Walker 轨道动态 ISL</h2>
+
+<div class="diagram">3轨道面×4星=12卫星, 3地面站, 2用户, 100s
+Python orbit-events.py (轨道力学) → JSON → C++ 嵌入 → B2 验证
+事件: t=25s 跨面ISL新增, t=40s GS-E雨衰 350→80M, t=70s GS-W上线</div>
+
+<table>
+<tr><th></th><th>B2 报</th><th>理论</th><th>差</th></tr>
+<tr><td>A1→GS-E (稳态)</td><td class="big-num">138M</td><td>155M (350−195)</td><td>~11%</td></tr>
+<tr><td>Split Horizon 效果</td><td class="big-num" colspan="3">100s 仅 31 条 B2 消息</td></tr>
+<tr><td>雨衰事件</td><td class="delta-down" colspan="3">t=40s: A1 ADV 350→80M ✓</td></tr>
+</table>
+
+<!-- ═══════════ 方法 ═══════════ -->
+<h2>验证环境</h2>
+<div class="flex3">
+  <div><div class="lab">仿真平台</div><div class="val">NS-3.42</div><div class="lab">P2P + Ipv4GlobalRouting</div></div>
+  <div><div class="lab">真实流量</div><div class="val">UDP OnOff</div><div class="lab">100-200Mbps, PacketSink统计</div></div>
+  <div><div class="lab">端口监测</div><div class="val">Queue Counter</div><div class="lab">DropTailQueue·GetTotalReceivedBytes</div></div>
+</div>
+
+<div class="flex3">
+  <div><div class="lab">轨道联动</div><div class="val">Python→C++</div><div class="lab">Walker·Kepler·ISL可视图</div></div>
+  <div><div class="lab">PCAP 抓包</div><div class="val">tcpdump -X</div><div class="lab">B2 原始字节可验证</div></div>
+  <div><div class="lab">协议对标</div><div class="val">OSPF/BGP/RIP</div><div class="lab">标准骨架：定界·标识·长度·去重</div></div>
+</div>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:.85rem">SBDP — Satellite Backhaul Discovery Protocol | NS-3.42 + Python Walker Orbit | 2026</p>
+
+</div>
+</body>
+</html>
