@@ -55,6 +55,61 @@ hr{border:none;border-top:1px solid var(--border);margin:1.5rem 0}
   <div><div class="lab">收敛</div><div class="val">≤200ms</div><div class="lab">跳数×检查周期</div></div>
 </div>
 
+<!-- ═══════════ 协议设计 ═══════════ -->
+<h2>协议设计</h2>
+
+<h3>报文结构 — 标准协议骨架</h3>
+<pre>  0               1               2               3
+  0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7
+┌───────────────┬───────────────┬───────────────┬───────────────┐
+│    Magic      │    Magic      │   Version     │     Type      │
+│    0x42       │    0x32       │      1        │  0/1/2        │
+│   (定界)       │   (定界)       │   (标识)       │   (标识)       │
+├───────────────┴───────────────┼───────────────┼───────────────┤
+│         Total Length          │         Sequence Number       │
+│         (长度, uint16)         │         (去重, uint16)         │
+├───────────────┬───────────────┴───────────────┴───────────────┤
+│   Name Len    │            Sender Name (variable)             │
+│   (uint8)     │                                                │
+├───────────────┼────────────────────────────────────────────────┤
+│   N (uint8)   │  GS Entries: [GS Name Len(1B)|GS Name|Bw(4B)] │
+│  (条目数)       │  ... 重复 N 次 ...                             │
+└───────────────┴────────────────────────────────────────────────┘</pre>
+
+<div class="flex3">
+  <div><div class="lab">定界</div><div class="val">Magic 0x42 0x32</div><div class="lab">非B2包直接丢弃</div></div>
+  <div><div class="lab">标识</div><div class="val">Version + Type</div><div class="lab">版本升级兼容</div></div>
+  <div><div class="lab">长度</div><div class="val">TotalLength u16</div><div class="lab">自描述，不依赖推导</div></div>
+</div>
+
+<h3>消息语义与状态机</h3>
+<table>
+<tr><th>Type</th><th>含义</th><th>触发条件</th><th>行为</th></tr>
+<tr><td><span class="tag t-orange">PUSH (0)</span></td><td>主动推送</td><td>端口流量变化 ≥ 阈值</td><td>向所有邻居推送当前 GS 瓶颈表</td></tr>
+<tr><td><span class="tag t-blue">REQUEST (1)</span></td><td>初始拉取</td><td>卫星启动</td><td>向所有邻居请求 GS 瓶颈表</td></tr>
+<tr><td><span class="tag t-green">REPLY (2)</span></td><td>按需回复</td><td>收到 REQUEST</td><td>单播回复当前 GS 瓶颈表</td></tr>
+</table>
+
+<h3>处理规则 — 逐跳 min 瓶颈 + Split Horizon</h3>
+<pre>收到 PUSH/REPLY (来自邻居 N, 含GS条目 G):
+  if N ≠ 本卫星到 G 的路由下一跳 → 忽略 (路由对齐)
+  if G 是直连 GS → 忽略 (本地权威)
+  newBw = min( 本卫星→N的可用带宽 , N通告的瓶颈 )
+  if newBw > m_gs[G]:
+    m_gs[G] = newBw
+    m_gsSource[G] = N           ← 记录来源
+    触发 PUSH 给其他邻居 (Split Horizon: 不推回给 N)
+
+可用带宽计算 (每200ms):
+  avail = 链路容量 − (队列GetTotalReceivedBytes() delta / dt)
+  → 真实端口监测, 非静态配置</pre>
+
+<h3>N2 接口 — gNB↔Router (星内本地)</h3>
+<pre>同一颗卫星内部, 127.0.0.1:9998
+gNB → Router: [0x00] (1B trigger)
+Router → gNB: [N(1B)] [for each GS: bw(4B) name_len(4B) name desc_len(4B) desc]
+gNB 收到后 → 逐GS构建 ADV → 推送给覆盖区内所有 UE</pre>
+
 <!-- ═══════════ 关键实验 ═══════════ -->
 <h2>关键实验 — 用户切换下的回传容量感知</h2>
 
@@ -90,22 +145,6 @@ hr{border:none;border-top:1px solid var(--border);margin:1.5rem 0}
 <div class="card">
 <strong>验证结论：</strong>B2 端口监测检测到流量从 200Mbps 降到 100Mbps，可用带宽从 138M 回升到 244M。留守用户 U2 通过 ADV 收到更新值。<br>
 <strong>PCAP 交叉验证：</strong>B2 队列监测 5.29MB/周期 → 总 1.32GB；PCAP 抓包 1,928,587 包 ≈ 1.33GB。<strong>差 < 1%。</strong>
-</div>
-
-<!-- ═══════════ 协议原理 ═══════════ -->
-<h2>协议原理</h2>
-
-<div class="diagram">B2 报文格式 (标准协议骨架):
-┌──────┬──────┬──────┬──────┬──────────┬──────────┬──────┬──────┬───────────┐
-│Magic │Magic │ Ver  │ Type │Total Len │ Sequence │NameL │ Name │ N×[GS+Bw] │
-│0x42  │0x32  │  1   │0/1/2 │ (uint16) │ (uint16) │(u8)  │(var) │   (var)   │
-└──────┴──────┴──────┴──────┴──────────┴──────────┴──────┴──────┴───────────┘
-Type: 0=PUSH(变即推) 1=REQUEST(启动拉) 2=REPLY(问才回)</div>
-
-<div class="flex3">
-  <div><div class="lab">端口监测</div><div class="val">队列字节</div><div class="lab">GetTotalReceivedBytes()</div></div>
-  <div><div class="lab">瓶颈传播</div><div class="val">距离矢量</div><div class="lab">min(链路, 收到值)</div></div>
-  <div><div class="lab">开销优化</div><div class="val">Split Horizon</div><div class="lab">不推回来源邻居</div></div>
 </div>
 
 <!-- ═══════════ 辅助实验 ═══════════ -->
