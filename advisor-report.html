@@ -61,23 +61,23 @@ hr{border:none;border-top:1px solid var(--border);margin:1.5rem 0}
 <h3>报文结构 — 标准协议骨架</h3>
 <pre><span style="color:#94a3b8"> 字节  0    1    2    3    4    5    6    7    8    9   10   11   12   13   14   15
      ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
-  0  │     Magic=0x4232       │ Ver=1 │ Type │       Total Length (uint16)        │
-     │        (定界)           │ (标识) │ (标识) │         (自描述长度)                │
-     ├────┴────┴────┴────┴────┼────┴────┼────┴────┴────┴────┴────┴────┴────┴────┴────┤
-  8  │   Sequence (uint16)    │</span><span style="color:#58a6ff">NameLen</span><span style="color:#94a3b8">  │</span><span style="color:#58a6ff">         Sender Name (NameLen bytes)        </span><span style="color:#94a3b8">│
-     │      (去重/排序)        │</span><span style="color:#58a6ff">(uint8)</span><span style="color:#94a3b8"> │</span><span style="color:#58a6ff">                                            </span><span style="color:#94a3b8">│
-     ├────────────────────────┴─────────┴────────────────────────────────────────────┤
+  0  │     Magic=0x4232       │ Ver=1 │ Type │ TTL  │       Total Length (uint16)    │
+     │        (定界)           │ (标识) │ (标识) │(防环) │         (自描述长度)           │
+     ├────┴────┴────┴────┴────┴────┴────┼────┴────┴────┴────┴────┴────┴────┴────┴────┤
+  8  │         Sequence (uint16)         │</span><span style="color:#58a6ff">NameLen</span><span style="color:#94a3b8">  │</span><span style="color:#58a6ff">    Sender Name    </span><span style="color:#94a3b8">│
+     │            (去重/排序)            │</span><span style="color:#58a6ff">(uint8)</span><span style="color:#94a3b8"> │</span><span style="color:#58a6ff">   (NameLen bytes) </span><span style="color:#94a3b8">│
+     ├──────────────────────────────────┴─────────┴──────────────────────────────────┤
   ?  │</span><span style="color:#58a6ff"> N (uint8) │ GS NameLen(1B) │   GS Name (GS NameLen bytes)    │  Bw (int32)  </span><span style="color:#94a3b8">│
      │</span><span style="color:#58a6ff"> (GS条目数) │                 │                                │    (Mbps)     </span><span style="color:#94a3b8">│
      ├───────────┴─────────────────┴────────────────────────────────┴───────────────┤
   ?  │</span><span style="color:#58a6ff">              ... 重复 N 次 (每个 GS 条目) ...                                 </span><span style="color:#94a3b8">│
      └───────────────────────────────────────────────────────────────────────────────┘</span>
 
-<span style="color:#94a3b8">  标准骨架 (灰色): Magic·Version·Type·TotalLen·Seq — 对标 OSPF/BGP/RIP</span>
-<span style="color:#58a6ff">  B2 协议定义 (蓝色): 发送者名称·GS条目结构·瓶颈带宽·Type语义 — B2 自定载荷</span>
+<span style="color:#94a3b8">  标准骨架 (灰色): Magic·Version·Type·TTL·TotalLen·Seq — 对标 OSPF (IP TTL)</span>
+<span style="color:#58a6ff">  B2 协议定义 (蓝色): 发送者名称·GS条目结构·瓶颈带宽</span>
 
-  最小包: REQUEST = 11B │ 典型包: PUSH(1 GS) = 27B │ 最大包: PUSH(3 GS) = 42B
-  Type: 0=PUSH 1=REQUEST 2=REPLY</pre>
+  最小包: REQUEST = 12B │ 典型包: PUSH(1 GS) = 28B │ 最大包: PUSH(3 GS) = 43B
+  TTL: 初始=32, 每跳−1, 到0丢弃  |  Type: 0=PUSH 1=REQUEST 2=REPLY</pre>
 
 <div class="flex3">
   <div><div class="lab">定界</div><div class="val">Magic 0x4232</div><div class="lab">非B2包 → 直接丢弃</div></div>
@@ -106,6 +106,18 @@ hr{border:none;border-top:1px solid var(--border);margin:1.5rem 0}
 可用带宽计算 (每200ms):
   avail = 链路容量 − (队列GetTotalReceivedBytes() delta / dt)
   → 真实端口监测, 非静态配置</pre>
+
+
+<h3>错误处理</h3>
+<table>
+<tr><th>错误</th><th>行为</th></tr>
+<tr><td>Magic ≠ 0x4232</td><td>静默丢弃</td></tr>
+<tr><td>Version ≠ 1</td><td>静默丢弃 (未来版本向前兼容)</td></tr>
+<tr><td>Type ∉ {0,1,2}</td><td>静默丢弃</td></tr>
+<tr><td>TTL = 0</td><td>丢弃 (防环, 不转发)</td></tr>
+<tr><td>TotalLength ≠ 实际包长</td><td>丢弃</td></tr>
+<tr><td>REQUEST 无响应 (1s超时)</td><td>重发 ×3, 仍无→标记邻居不可达</td></tr>
+</table>
 
 <h3>N2 接口 — gNB↔Router (星内本地)</h3>
 <pre>同一颗卫星内部, 127.0.0.1:9998

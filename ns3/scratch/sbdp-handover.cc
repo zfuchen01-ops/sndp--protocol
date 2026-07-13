@@ -131,10 +131,11 @@ void SatRouter::SendPush() {
 
   std::string myName = Names::FindName(GetNode());
   uint8_t buf[512]; int pos = 0;
-  // Fixed header (8 bytes)
+  // Fixed header (9 bytes)
   buf[pos++] = 0x42; buf[pos++] = 0x32;  // Magic "B2"
   buf[pos++] = 1;                          // Version
   buf[pos++] = 0;                          // Type = PUSH
+  buf[pos++] = 32;                         // TTL (hop limit, anti-loop)
   pos += 2;                                // TotalLen placeholder
   uint16_t seq = m_seq++;
   memcpy(buf + pos, &seq, 2); pos += 2;   // Sequence Number
@@ -152,7 +153,7 @@ void SatRouter::SendPush() {
   }
   // Fill Total Length
   uint16_t total = (uint16_t)pos;
-  memcpy(buf + 4, &total, 2);
+  memcpy(buf + 5, &total, 2);
 
   Ptr<Packet> pkt = Create<Packet>(buf, pos);
   for (auto &nb : m_nb)
@@ -175,6 +176,7 @@ void SatRouter::SendRequest() {
   buf[pos++] = 0x42; buf[pos++] = 0x32;  // Magic "B2"
   buf[pos++] = 1;                          // Version
   buf[pos++] = 1;                          // Type = REQUEST
+  buf[pos++] = 32;                         // TTL
   pos += 2;                                // TotalLen placeholder
   uint16_t seq = m_seq++;
   memcpy(buf + pos, &seq, 2); pos += 2;   // Sequence Number
@@ -183,7 +185,7 @@ void SatRouter::SendRequest() {
   memcpy(buf + pos, myName.c_str(), myName.size()); pos += myName.size();
   // Fill Total Length
   uint16_t total = (uint16_t)pos;
-  memcpy(buf + 4, &total, 2);
+  memcpy(buf + 5, &total, 2);
 
   Ptr<Packet> pkt = Create<Packet>(buf, pos);
   for (auto &nb : m_nb)
@@ -202,6 +204,7 @@ void SatRouter::SendReply(const std::string &target) {
   buf[pos++] = 0x42; buf[pos++] = 0x32;  // Magic "B2"
   buf[pos++] = 1;                          // Version
   buf[pos++] = 2;                          // Type = REPLY
+  buf[pos++] = 32;                         // TTL
   pos += 2;                                // TotalLen placeholder
   uint16_t seq = m_seq++;
   memcpy(buf + pos, &seq, 2); pos += 2;   // Sequence Number
@@ -219,7 +222,7 @@ void SatRouter::SendReply(const std::string &target) {
   }
   // Fill Total Length
   uint16_t total = (uint16_t)pos;
-  memcpy(buf + 4, &total, 2);
+  memcpy(buf + 5, &total, 2);
 
   Ptr<Packet> pkt = Create<Packet>(buf, pos);
   m_sk->SendTo(pkt, 0, InetSocketAddress(m_nb[target].ip, 9997));
@@ -241,9 +244,11 @@ void SatRouter::RecvEx(Ptr<Socket> s) {
     if (buf[0] != 0x42 || buf[1] != 0x32) continue;  // Wrong magic
     if (buf[2] != 1) continue;                         // Unknown version
     uint8_t type = buf[3];
-    uint16_t totalLen; memcpy(&totalLen, buf + 4, 2);
-    uint16_t seq; memcpy(&seq, buf + 6, 2);
-    uint8_t nameLen = buf[8];
+    uint8_t ttl = buf[4];
+    if (ttl == 0) continue;  // TTL expired, drop
+    uint16_t totalLen; memcpy(&totalLen, buf + 5, 2);
+    uint16_t seq; memcpy(&seq, buf + 7, 2);
+    uint8_t nameLen = buf[9];
     std::string nbName((char*)buf + 9, nameLen);
     int pos = 9 + nameLen;
 
