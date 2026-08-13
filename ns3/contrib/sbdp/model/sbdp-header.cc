@@ -458,4 +458,92 @@ SbdpHeader SbdpHeader::BuildConfirm (
   return hdr;
 }
 
+// ═══════════════════════════════════
+//  ISL gossip builders
+// ═══════════════════════════════════
+
+SbdpHeader SbdpHeader::BuildIslReq (
+    const std::string &src, uint16_t seq)
+{
+  SbdpHeader hdr;
+  hdr.SetMsgType (SBDP_CAPACITY_REQ);
+  hdr.SetSeqNum (seq);
+  hdr.SetBackhaulBw (std::numeric_limits<float>::infinity ());
+  hdr.SetSrcNode (src);
+  return hdr;
+}
+
+SbdpHeader SbdpHeader::BuildIslPush (
+    const std::string &src, const std::string &gsName, float bw,
+    uint16_t seq)
+{
+  SbdpHeader hdr;
+  hdr.SetMsgType (SBDP_LINK_PROBE);
+  hdr.SetSeqNum (seq);
+  hdr.SetBackhaulBw (bw);
+  hdr.SetSrcNode (src);
+  // GS name → BOTTLENECK_LINK TLV; bw already in fixed header
+  hdr.SetBottleneckLink (gsName);
+  // GS_BOTTLENECK TLV: raw name+int32_bw for exact backward compat
+  std::string val = gsName;
+  val.push_back ('\0');
+  int32_t bwInt = (int32_t)bw;
+  val.append ((char*)&bwInt, 4);
+  hdr.SetTlv (SbdpTlv::Str (SBDP_TLV_GS_BOTTLENECK, val));
+  return hdr;
+}
+
+SbdpHeader SbdpHeader::BuildIslReply (
+    const std::string &src, const std::string &dest,
+    const std::string &gsName, float bw, uint16_t seq)
+{
+  SbdpHeader hdr;
+  hdr.SetMsgType (SBDP_CAPACITY_ACK);
+  hdr.SetSeqNum (seq);
+  hdr.SetBackhaulBw (bw);
+  hdr.SetSrcNode (src);
+  hdr.SetDestNode (dest);
+  hdr.SetBottleneckLink (gsName);
+  std::string val = gsName;
+  val.push_back ('\0');
+  int32_t bwInt = (int32_t)bw;
+  val.append ((char*)&bwInt, 4);
+  hdr.SetTlv (SbdpTlv::Str (SBDP_TLV_GS_BOTTLENECK, val));
+  return hdr;
+}
+
+// ═══════════════════════════════════
+//  N2 builders
+// ═══════════════════════════════════
+
+SbdpHeader SbdpHeader::BuildN2Req (
+    const std::string &src, uint16_t seq)
+{
+  SbdpHeader hdr;
+  hdr.SetMsgType (SBDP_CAPACITY_REQ);
+  hdr.SetSeqNum (seq);
+  hdr.SetBackhaulBw (std::numeric_limits<float>::infinity ());
+  hdr.SetSrcNode (src);
+  return hdr;
+}
+
+SbdpHeader SbdpHeader::BuildN2Ack (
+    const std::string &src, const std::string &dest,
+    const std::string &gsName, float bw, uint16_t seq)
+{
+  SbdpHeader hdr;
+  hdr.SetMsgType (SBDP_CAPACITY_ACK);
+  hdr.SetSeqNum (seq);
+  hdr.SetBackhaulBw (bw);
+  hdr.SetSrcNode (src);
+  hdr.SetDestNode (dest);
+  hdr.SetBottleneckLink (gsName);
+  std::string val = gsName;
+  val.push_back ('\0');
+  int32_t bwInt = (int32_t)bw;
+  val.append ((char*)&bwInt, 4);
+  hdr.SetTlv (SbdpTlv::Str (SBDP_TLV_GS_BOTTLENECK, val));
+  return hdr;
+}
+
 } // namespace ns3

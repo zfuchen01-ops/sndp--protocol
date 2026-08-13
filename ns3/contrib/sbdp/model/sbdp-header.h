@@ -71,6 +71,8 @@ enum SbdpTlvType : uint16_t {
   SBDP_TLV_MIGRATE_REASON  = 0x0014,
   SBDP_TLV_UE_LIST         = 0x0015,
   SBDP_TLV_RESERVED_BW     = 0x0016,
+  // ISL gossip
+  SBDP_TLV_GS_BOTTLENECK   = 0x0020,  // GS name + bw pair for ISL gossip (one per GS)
 };
 
 // ── TLV entry ──
@@ -216,6 +218,23 @@ public:
       const std::string &acceptedUes, float reservedBw,
       const std::string &rejectedUes = "",
       const std::string &altSuggestion = "", uint16_t reqSeq = 0);
+
+  // ── ISL gossip builders ──
+  static SbdpHeader BuildIslReq (
+      const std::string &src, uint16_t seq = 0);
+  static SbdpHeader BuildIslPush (
+      const std::string &src, const std::string &gsName, float bw,
+      uint16_t seq = 0);
+  static SbdpHeader BuildIslReply (
+      const std::string &src, const std::string &dest,
+      const std::string &gsName, float bw, uint16_t seq = 0);
+
+  // ── N2 builders ──
+  static SbdpHeader BuildN2Req (
+      const std::string &src, uint16_t seq = 0);
+  static SbdpHeader BuildN2Ack (
+      const std::string &src, const std::string &dest,
+      const std::string &gsName, float bw, uint16_t seq = 0);
 
 private:
   void RebuildTotalLength ();

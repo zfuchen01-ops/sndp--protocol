@@ -196,7 +196,7 @@ int main (int argc, char *argv[]) {
   u->target = i01.GetAddress(1);  // → SAT-A:9999
   n.Get(0)->AddApplication (u); u->SetStartTime (Seconds (0.0));
 
-  // ── Data flow: User-1 → Server (UDP 200Mbps > 150M bottleneck, queue drops to ~150M) ──
+  // ── Data flow: User-1 → Server (UDP 150Mbps > 150M bottleneck, queue drops to ~150M) ──
   uint16_t dataPort = 5001;
   PacketSinkHelper sink ("ns3::UdpSocketFactory",
     InetSocketAddress (Ipv4Address::GetAny (), dataPort));
@@ -206,9 +206,9 @@ int main (int argc, char *argv[]) {
 
   OnOffHelper onoff ("ns3::UdpSocketFactory",
     InetSocketAddress (i23.GetAddress (1), dataPort));
-  onoff.SetAttribute ("DataRate", DataRateValue (DataRate ("200Mbps")));
+  onoff.SetAttribute ("DataRate", DataRateValue (DataRate ("150Mbps")));
   onoff.SetAttribute ("PacketSize", UintegerValue (1472));
-  onoff.SetConstantRate (DataRate ("200Mbps"));
+  onoff.SetConstantRate (DataRate ("150Mbps"));
   ApplicationContainer clientApp = onoff.Install (n.Get (0)); // User-1
   clientApp.Start (Seconds (0.5));
   clientApp.Stop (Seconds (2));
@@ -223,7 +223,7 @@ int main (int argc, char *argv[]) {
   NS_LOG_UNCOND ("╠══════════════════════════════════════════════╣");
   NS_LOG_UNCOND ("║  User-1(150M)→SAT-A(600M)→SAT-B(350M)→Server ║");
   NS_LOG_UNCOND ("║  Expected: min(150,600,350,1000) = 150 Mbps  ║");
-  NS_LOG_UNCOND ("║  Data: UDP 200Mbps → bottleneck cuts to ~150M ║");
+  NS_LOG_UNCOND ("║  Data: UDP 150Mbps → bottleneck cuts to ~150M ║");
   NS_LOG_UNCOND ("╚══════════════════════════════════════════════╝\n");
 
   Simulator::Stop (Seconds (2));

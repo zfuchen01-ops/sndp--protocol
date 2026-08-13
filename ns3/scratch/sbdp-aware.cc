@@ -1,13 +1,13 @@
-/* SBDP Exp 2 — B2 Pull+Push with Port Monitoring + N2 + ADV (A)
+/* SBDP Exp 2 — SbdpHeader Pull+Push + Port Monitoring + N2 + ADV (A)
  *
- * B2: Pull-init + Push-on-change (port monitoring).
- *     Satellites monitor their own neighbor/GS state vs snapshot.
- *     On change → instant PUSH to all neighbors.
- *     On REQUEST → REPLY with current GS info.
- *     Stable period → zero B2 traffic.
+ * ISL: Pull-init + Push-on-change (port monitoring).
+ *      Satellites use SbdpHeader (SBDP_LINK_PROBE / SBDP_CAPACITY_REQ / SBDP_CAPACITY_ACK).
+ *      On change → instant PROBE to all neighbors (one per GS).
+ *      On REQUEST → ACK with current GS info.
+ *      Stable period → zero ISL traffic.
  *
- * N2: gNB queries local Router → gets best e2e bottleneck.
- * A:  gNB broadcasts ADV to covered UEs.
+ * N2: gNB queries local Router via SBDP_CAPACITY_REQ → gets GS table via SBDP_CAPACITY_ACK.
+ * ADV: gNB broadcasts SbdpHeader::BuildAdv to covered UEs.
  */
 
 #include "ns3/core-module.h"
@@ -28,7 +28,7 @@
 using namespace ns3;
 NS_LOG_COMPONENT_DEFINE("SbdpHandover");
 
-// ═══════════════════ SatRouter: B2 Pull+Push + Port Monitoring ═══════════════════
+// ═══════════════════ SatRouter: SbdpHeader Pull+Push + Port Monitoring ═══════════════════
 
 class SatRouter : public Application {
 public:
@@ -65,7 +65,7 @@ private:
   double m_lastMonTime=0;
   EventId m_checkTimer;
   bool m_initialized = false;
-  uint16_t m_seq = 0;  // B2 message sequence number
+  uint16_t m_seq = 0;  // SbdpHeader message sequence number
 };
 
 NS_OBJECT_ENSURE_REGISTERED(SatRouter);
@@ -104,186 +104,116 @@ void SatRouter::StopApplication() {
   if (m_sk) m_sk->Close();
 }
 
-// ── N2: gNB queries Router ──
+// ── N2: gNB queries Router (SBDP_CAPACITY_REQ → SBDP_CAPACITY_ACK per GS) ──
 void SatRouter::RecvN2(Ptr<Socket> s) {
   Ptr<Packet> pkt; Address from;
   while ((pkt = s->RecvFrom(from))) {
-    // Send ALL GS entries to gNB
-    uint8_t buf[512]; int pos = 0;
-    buf[pos++] = (uint8_t)m_gs.size();
+    // Send one SBDP_CAPACITY_ACK per GS entry
+    std::string myName = Names::FindName(GetNode());
     for (auto &p : m_gs) {
-      int32_t bw = (int32_t)p.second; memcpy(buf + pos, &bw, 4); pos += 4;
-      uint32_t nl = p.first.size(); memcpy(buf + pos, &nl, 4); pos += 4;
-      memcpy(buf + pos, p.first.c_str(), nl); pos += nl;
-      std::string bl = Names::FindName(GetNode()) + "→" + p.first + "(" + std::to_string((int)p.second) + "M)";
-      uint32_t blen = bl.size(); memcpy(buf + pos, &blen, 4); pos += 4;
-      memcpy(buf + pos, bl.c_str(), blen); pos += blen;
+      SbdpHeader h = SbdpHeader::BuildN2Ack(myName, "gNB", p.first, (float)p.second, m_seq++);
+      Ptr<Packet> resp = Create<Packet>(0); resp->AddHeader(h);
+      s->SendTo(resp, 0, from);
     }
-    s->SendTo(Create<Packet>(buf, pos), 0, from);
-    NS_LOG_UNCOND("  [R " << Names::FindName(GetNode()) << "] N2→gNB: " << m_gs.size() << " GS, best=" << m_bestGs << ":" << (int)m_bestBw << "M");
+    NS_LOG_UNCOND("  [R " << myName << "] N2→gNB: " << m_gs.size() << " GS (SbdpHeader ACK), best=" << m_bestGs << ":" << (int)m_bestBw << "M");
   }
 }
 
-// ── B2 Send PUSH (type=0) — unsolicited, port changed ──
-// Wire format: [Magic:0x42,0x32][Ver:1][Type:0][TotalLen:2B][Seq:2B][NameLen][Name][N][entries...]
+// ── Send ISL push — SBDP_LINK_PROBE per GS ──
 void SatRouter::SendPush() {
   if (m_gs.empty()) return;
 
   std::string myName = Names::FindName(GetNode());
-  uint8_t buf[512]; int pos = 0;
-  // Fixed header (8 bytes)
-  buf[pos++] = 0x42; buf[pos++] = 0x32;  // Magic "B2"
-  buf[pos++] = 1;                          // Version
-  buf[pos++] = 0;                          // Type = PUSH
-  pos += 2;                                // TotalLen placeholder
-  uint16_t seq = m_seq++;
-  memcpy(buf + pos, &seq, 2); pos += 2;   // Sequence Number
-  // Name
-  buf[pos++] = (uint8_t)myName.size();
-  memcpy(buf + pos, myName.c_str(), myName.size()); pos += myName.size();
-  // GS entries
-  int n = 0; for (auto &p : m_gs) n++;
-  buf[pos++] = (uint8_t)n;
+  int n = 0;
   for (auto &p : m_gs) {
-    uint8_t nl = p.first.size(); buf[pos++] = nl;
-    memcpy(buf + pos, p.first.c_str(), nl); pos += nl;
-    int32_t bw = (int32_t)p.second;
-    memcpy(buf + pos, &bw, 4); pos += 4;
+    SbdpHeader h = SbdpHeader::BuildIslPush(myName, p.first, (float)p.second, m_seq++);
+    Ptr<Packet> pkt = Create<Packet>(0); pkt->AddHeader(h);
+    for (auto &nb : m_nb)
+      m_sk->SendTo(pkt, 0, InetSocketAddress(nb.second.ip, 9997));
+    n++;
   }
-  // Fill Total Length
-  uint16_t total = (uint16_t)pos;
-  memcpy(buf + 4, &total, 2);
-
-  Ptr<Packet> pkt = Create<Packet>(buf, pos);
-  for (auto &nb : m_nb)
-    m_sk->SendTo(pkt, 0, InetSocketAddress(nb.second.ip, 9997));
 
   // Update snapshots
   m_nbSnapshot.clear();
   for (auto &nb : m_nb) m_nbSnapshot[nb.first] = nb.second.bw;
-  
 
-  NS_LOG_UNCOND("  [PUSH " << myName << "] seq=" << seq << " → " << m_nb.size()
-    << " nb, best=" << m_bestGs << ":" << (int)m_bestBw << "M (" << n << " GS, len=" << total << "B)");
+  NS_LOG_UNCOND("  [PROBE " << myName << "] seq=" << (m_seq-1) << " → " << m_nb.size()
+    << " nb, best=" << m_bestGs << ":" << (int)m_bestBw << "M (" << n << " GS×SbdpHeader PROBE)");
 }
 
-// ── B2 Send REQUEST (type=1) — initial pull ──
+// ── Send ISL request — SBDP_CAPACITY_REQ (16B) ──
 void SatRouter::SendRequest() {
   std::string myName = Names::FindName(GetNode());
-  uint8_t buf[256]; int pos = 0;
-  // Fixed header
-  buf[pos++] = 0x42; buf[pos++] = 0x32;  // Magic "B2"
-  buf[pos++] = 1;                          // Version
-  buf[pos++] = 1;                          // Type = REQUEST
-  pos += 2;                                // TotalLen placeholder
-  uint16_t seq = m_seq++;
-  memcpy(buf + pos, &seq, 2); pos += 2;   // Sequence Number
-  // Name
-  buf[pos++] = (uint8_t)myName.size();
-  memcpy(buf + pos, myName.c_str(), myName.size()); pos += myName.size();
-  // Fill Total Length
-  uint16_t total = (uint16_t)pos;
-  memcpy(buf + 4, &total, 2);
-
-  Ptr<Packet> pkt = Create<Packet>(buf, pos);
+  SbdpHeader h = SbdpHeader::BuildIslReq(myName, m_seq++);
+  Ptr<Packet> pkt = Create<Packet>(0); pkt->AddHeader(h);
   for (auto &nb : m_nb)
     m_sk->SendTo(pkt, 0, InetSocketAddress(nb.second.ip, 9997));
-  NS_LOG_UNCOND("  [REQ " << myName << "] seq=" << seq << " → " << m_nb.size()
-    << " nb (len=" << total << "B)");
+  NS_LOG_UNCOND("  [REQ " << myName << "] seq=" << (m_seq-1) << " → " << m_nb.size()
+    << " nb (SbdpHeader REQ)");
 }
 
-// ── B2 Send REPLY (type=2) — response to REQUEST ──
+// ── Send ISL reply — SBDP_CAPACITY_ACK per GS ──
 void SatRouter::SendReply(const std::string &target) {
   if (m_gs.empty() || !m_nb.count(target)) return;
 
   std::string myName = Names::FindName(GetNode());
-  uint8_t buf[512]; int pos = 0;
-  // Fixed header
-  buf[pos++] = 0x42; buf[pos++] = 0x32;  // Magic "B2"
-  buf[pos++] = 1;                          // Version
-  buf[pos++] = 2;                          // Type = REPLY
-  pos += 2;                                // TotalLen placeholder
-  uint16_t seq = m_seq++;
-  memcpy(buf + pos, &seq, 2); pos += 2;   // Sequence Number
-  // Name
-  buf[pos++] = (uint8_t)myName.size();
-  memcpy(buf + pos, myName.c_str(), myName.size()); pos += myName.size();
-  // GS entries
-  int n = 0; for (auto &p : m_gs) n++;
-  buf[pos++] = (uint8_t)n;
+  int n = 0;
   for (auto &p : m_gs) {
-    uint8_t nl = p.first.size(); buf[pos++] = nl;
-    memcpy(buf + pos, p.first.c_str(), nl); pos += nl;
-    int32_t bw = (int32_t)p.second;
-    memcpy(buf + pos, &bw, 4); pos += 4;
+    SbdpHeader h = SbdpHeader::BuildIslReply(myName, target, p.first, (float)p.second, m_seq++);
+    Ptr<Packet> pkt = Create<Packet>(0); pkt->AddHeader(h);
+    m_sk->SendTo(pkt, 0, InetSocketAddress(m_nb[target].ip, 9997));
+    n++;
   }
-  // Fill Total Length
-  uint16_t total = (uint16_t)pos;
-  memcpy(buf + 4, &total, 2);
-
-  Ptr<Packet> pkt = Create<Packet>(buf, pos);
-  m_sk->SendTo(pkt, 0, InetSocketAddress(m_nb[target].ip, 9997));
-  NS_LOG_UNCOND("  [REPLY " << myName << "] seq=" << seq
-    << " → " << target << " (len=" << total << "B)");
+  NS_LOG_UNCOND("  [REPLY " << myName << "] seq=" << (m_seq-1)
+    << " → " << target << " (" << n << " GS×SbdpHeader ACK)");
 }
 
-// ── B2 Receive (all types) ──
-// Fixed header: Magic(2) + Version(1) + Type(1) + TotalLen(2) + Seq(2) = 8 bytes
-// On PUSH/REPLY: update m_gs, track source, then propagate to our neighbors
+// ── ISL Receive — SbdpHeader deserialize + TLV parse ──
 void SatRouter::RecvEx(Ptr<Socket> s) {
   Ptr<Packet> pkt; Address from;
   bool propagated = false;
   while ((pkt = s->RecvFrom(from))) {
-    uint8_t buf[512]; pkt->CopyData(buf, pkt->GetSize());
-    if (pkt->GetSize() < 9) continue;  // Min: fixed header(8) + name_len(1)
+    if (pkt->GetSize() < SbdpHeader::SBDP_FIXED_SIZE) continue;
 
-    // Parse fixed header
-    if (buf[0] != 0x42 || buf[1] != 0x32) continue;  // Wrong magic
-    if (buf[2] != 1) continue;                         // Unknown version
-    uint8_t type = buf[3];
-    uint16_t totalLen; memcpy(&totalLen, buf + 4, 2);
-    uint16_t seq; memcpy(&seq, buf + 6, 2);
-    uint8_t nameLen = buf[8];
-    std::string nbName((char*)buf + 9, nameLen);
-    int pos = 9 + nameLen;
+    SbdpHeader h;
+    pkt->RemoveHeader(h);
+
+    uint8_t type = h.GetMsgType();
+    std::string nbName = h.GetSrcNode();
+    uint16_t seq = h.GetSeqNum();
 
     double nbLink = 1e9;
     if (m_nbMon.count(nbName)) { nbLink = m_nbMon[nbName].availBw; }
-    else if (m_nb.count(nbName)) nbLink = m_nb[nbName].bw;  // fallback to capacity
+    else if (m_nb.count(nbName)) nbLink = m_nb[nbName].bw;
 
-    if (type == 1) {
+    if (type == SBDP_CAPACITY_REQ) {
       // ── REQUEST: reply with our GS info ──
-      NS_LOG_UNCOND("  [B2 " << Names::FindName(GetNode()) << "] ←" << nbName
-        << " REQUEST seq=" << seq);
+      NS_LOG_UNCOND("  [SBDP " << Names::FindName(GetNode()) << "] ←" << nbName
+        << " REQ seq=" << seq);
       SendReply(nbName);
-    } else if (type == 0 || type == 2) {
-      // ── PUSH or REPLY: update from neighbor ──
-      if (pkt->GetSize() < (uint32_t)pos + 1) continue;
-      int n = buf[pos++]; bool chg = false;
+    } else if (type == SBDP_LINK_PROBE || type == SBDP_CAPACITY_ACK) {
+      // ── PROBE or ACK: update single GS from neighbor ──
+      std::string gs = h.GetBottleneckLink();
+      float nbBw = h.GetBackhaulBw();
+      if (gs.empty()) continue;
 
-      for (int i = 0; i < n && pos < (int)pkt->GetSize(); i++) {
-        uint8_t nl = buf[pos++];
-        std::string gs((char*)buf + pos, nl); pos += nl;
-        int32_t nbBw; memcpy(&nbBw, buf + pos, 4); pos += 4;
-        // Only accept GS info from our routing next-hop for that GS
-        if (!m_nexthop.count(gs)) continue;   // no route → ignore
-        if (m_nexthop[gs] == "") continue;     // direct → authoritative, don't override
-        if (m_nexthop[gs] != nbName) continue; // not our next-hop → ignore
-        double newBw = std::min(nbLink, (double)nbBw);
-        if (!m_gs.count(gs) || newBw != m_gs[gs]) { m_gs[gs] = newBw; chg = true; }
-      }
-      if (chg) {
+      // Only accept GS info from our routing next-hop for that GS
+      if (!m_nexthop.count(gs)) continue;
+      if (m_nexthop[gs] == "") continue;     // direct → authoritative
+      if (m_nexthop[gs] != nbName) continue; // not our next-hop → ignore
+      double newBw = std::min(nbLink, (double)nbBw);
+      if (!m_gs.count(gs) || newBw != m_gs[gs]) {
+        m_gs[gs] = newBw;
         m_bestBw = 0;
         for (auto &p : m_gs) if (p.second > m_bestBw) { m_bestBw = p.second; m_bestGs = p.first; }
-        NS_LOG_UNCOND("  [B2 " << Names::FindName(GetNode()) << "] ←" << nbName
-          << " " << (type == 0 ? "PUSH" : "REPLY") << " seq=" << seq
-          << " update: best=" << m_bestGs << ":" << (int)m_bestBw
-          << "M (via " << nbName << " link=" << (int)nbLink << "M)");
+        NS_LOG_UNCOND("  [SBDP " << Names::FindName(GetNode()) << "] ←" << nbName
+          << " " << (type == SBDP_LINK_PROBE ? "PROBE" : "ACK") << " seq=" << seq
+          << " gs=" << gs << " bw=" << (int)nbBw << "M newBw=" << (int)newBw
+          << "M best=" << m_bestGs << ":" << (int)m_bestBw << "M");
         propagated = true;
       }
     }
   }
-  // Propagate: if we learned new info, push to our neighbors
   if (propagated) {
     SendPush();
   }
@@ -379,25 +309,25 @@ void GnbApp::SendN2Query() {
 void GnbApp::RecvN2(Ptr<Socket> s) {
   Ptr<Packet> pkt; Address from;
   while ((pkt = s->RecvFrom(from))) {
-    uint8_t buf[512]; pkt->CopyData(buf, pkt->GetSize());
-    if (pkt->GetSize() < 1) continue;
-    int n = buf[0], pos = 1;
-    for (int i = 0; i < n && pos < (int)pkt->GetSize(); i++) {
-      int32_t bw; memcpy(&bw, buf + pos, 4); pos += 4;
-      uint32_t nl; memcpy(&nl, buf + pos, 4); pos += 4;
-      std::string gs((char*)buf + pos, nl); pos += nl;
-      uint32_t blen; memcpy(&blen, buf + pos, 4); pos += 4;
-      std::string bl((char*)buf + pos, blen); pos += blen;
-      NS_LOG_UNCOND("  [gNB " << Names::FindName(GetNode())
-        << "] N2: " << gs << "=" << bw << "M");
-      if (m_wait) {
-        m_seq++;
-        for (auto &ua : m_cov) {
-          SbdpHeader h = SbdpHeader::BuildAdv(
-            Names::FindName(GetNode()), "UE", (double)bw, gs + ":" + bl, m_seq);
-          Ptr<Packet> p = Create<Packet>(0); p->AddHeader(h);
-          m_sk->SendTo(p, 0, InetSocketAddress(ua, 8888));
-        }
+    // Parse SBDP_CAPACITY_ACK from Router
+    if (pkt->GetSize() < SbdpHeader::SBDP_FIXED_SIZE) continue;
+    SbdpHeader h;
+    pkt->RemoveHeader(h);
+    if (h.GetMsgType() != SBDP_CAPACITY_ACK) continue;
+
+    std::string gs = h.GetBottleneckLink();
+    float bw = h.GetBackhaulBw();
+    std::string src = h.GetSrcNode();
+
+    NS_LOG_UNCOND("  [gNB " << Names::FindName(GetNode())
+      << "] N2: " << gs << "=" << (int)bw << "M (SbdpHeader ACK from " << src << ")");
+    if (m_wait) {
+      m_seq++;
+      for (auto &ua : m_cov) {
+        SbdpHeader adv = SbdpHeader::BuildAdv(
+          Names::FindName(GetNode()), "UE", (double)bw, gs, m_seq);
+        Ptr<Packet> p = Create<Packet>(0); p->AddHeader(adv);
+        m_sk->SendTo(p, 0, InetSocketAddress(ua, 8888));
       }
     }
     if (m_wait) m_wait = false;
@@ -501,5 +431,5 @@ int main(){
   Simulator::Schedule(Seconds(45),[=](){double r1=DynamicCast<PacketSink>(sink1.Get(0))->GetTotalRx()/1e6,r2=DynamicCast<PacketSink>(sink2.Get(0))->GetTotalRx()/1e6;NS_LOG_UNCOND("═══ @45s: U1="<<r1<<"MB U2="<<r2<<"MB B2="<<r->GetBestE2e()<<"M ═══");});
 
   NS_LOG_UNCOND("\n═══ Aware: Handover → B2 Change ═══\n");
-  Simulator::Stop(Seconds(50));Simulator::Run();Simulator::Destroy();return 0;
+  p2p.EnablePcap("sbdp-aware-feed",dFeed.Get(0),true);p2p.EnablePcap("sbdp-aware-user1",du1.Get(0),true);Simulator::Stop(Seconds(50));Simulator::Run();Simulator::Destroy();return 0;
 }
